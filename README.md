@@ -38,6 +38,7 @@ one phase at a time and a verification checkpoint between each.
 | `DEPLOYMENT.md` | Hosting, env vars, cold starts, the "hosted link" requirement | Phase 6 |
 | `TEST_PLAN.md` | Test questions, refusal tests, latency measurement | Phase 5 onward |
 | `CLAUDE.md` | Project context file — **goes in project root** | Never edit mid-build without reason |
+| `DEV_JOURNAL.md` | Dated log of every verified step: what changed, why, and the concepts behind it | After every step, before moving to the next |
 
 ---
 

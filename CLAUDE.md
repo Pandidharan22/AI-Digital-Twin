@@ -90,6 +90,7 @@ ingestion job — GitHub via official MCP, plus local documents — keeps the co
 | `ingestion/ingest.py` | Corpus pipeline orchestrator |
 | `api/main.py` | Token service |
 | `docs/` | Full specification set |
+| `docs/DEV_JOURNAL.md` | Dated log of every verified step — decisions, changes, removals; written for interview prep |
 
 ---
 
@@ -104,6 +105,8 @@ Read the relevant doc **before** implementing:
 - `docs/BUILD_PLAN.md` — phase order and exit criteria
 - `docs/TEST_PLAN.md` — acceptance tests
 - `docs/SDK_NOTES.md` — verified LiveKit API surface
+- `docs/DEV_JOURNAL.md` — append an entry after every verified, committed step (see
+  Working style below); read it to catch up on prior reasoning fast
 
 ---
 
@@ -114,6 +117,17 @@ Read the relevant doc **before** implementing:
 - **Run things.** Don't say "this should work" — execute and show output.
 - **Diagnose before fixing.** When something breaks, explain the root cause first.
 - **Cite requirement IDs** in commits and comments where relevant.
+- **Log-then-commit, strictly, after every completed step.** The sequence is fixed and
+  does not skip steps, even under time pressure:
+  1. Do the work.
+  2. Verify it (run it, check output, confirm no secrets before any `git add`).
+  3. Commit the work on its own.
+  4. Write a `docs/DEV_JOURNAL.md` entry for it — detailed, and written so the
+     underlying concepts are understandable later, not just the diff. This journal is
+     the owner's interview-prep record of the project, not a changelog.
+  5. Commit the journal entry **separately** from the work it describes.
+  Never bundle a journal update into the same commit as the work — the history should
+  show "the change" and "the reflection on the change" as distinct commits.
 
 ---
 
