@@ -304,3 +304,130 @@ top-to-bottom in the order things happened is easier to turn into a spoken answe
   2026-08-16 (doc review) → 2026-08-16 (protocol) → 2026-08-17 (env fixes) →
   2026-08-17 (venv/deps), in the correct chronological order.
 - Scanned for secret-shaped strings before staging — none found.
+
+---
+
+## 2026-08-17 — Phase 0: Repository skeleton (P0.1 completion)
+
+**What happened**
+
+- Created the full directory structure specified in `ARCHITECTURE.md` Sec5:
+  `agent/` (`main.py`, `twin_agent.py`, `retrieval.py`, `citations.py`, `config.py`,
+  `prompts/system_prompt.md`), `ingestion/` (`ingest.py`, `chunker.py`, `embedder.py`,
+  `loaders/{pdf_loader,markdown_loader,github_mcp}.py`), `api/main.py`, plus
+  placeholder `web/`, `corpus/`, and `tests/` directories.
+- Every Python file got a module docstring describing its responsibility **and** the
+  specific FR/ADR it maps to (e.g. `agent/citations.py`'s docstring cites ADR-005 and
+  FR-4.1/4.2) — no logic yet, per `BUILD_PLAN.md` P0.1's explicit "do not implement
+  logic yet."
+- `web/`, `corpus/`, and `tests/` got a `README.md` instead of a Python docstring
+  (they're not Python packages) explaining what arrives there and in which phase.
+- Left `agent/prompts/system_prompt.md` genuinely empty (just an HTML comment
+  placeholder) rather than pre-filling the grounding contract from
+  `CITATION_SPEC.md` Sec5 — that's explicitly P3.2's job, not P0.1's, and writing it
+  now would mean writing it twice (once now, once for real once `OWNER_NAME` and the
+  actual voice are settled).
+- Flagged, not decided: whether `corpus/` should be added to `.gitignore` once real
+  documents (resume, personal context) land in it — noted in `corpus/README.md` as a
+  pending decision rather than assumed either way.
+
+**Why**
+
+The skeleton's value isn't the empty files themselves — it's that every future
+Claude Code session (or the owner, reading cold) can see the intended shape of the
+system without re-deriving it from `ARCHITECTURE.md` prose each time, and the
+docstrings double as a standing checklist of what each module still owes the spec.
+
+**Decisions made**
+
+- Added `__init__.py` to `agent/`, `ingestion/`, `ingestion/loaders/`, and `api/` even
+  though `ARCHITECTURE.md`'s tree diagram doesn't show them explicitly — Python
+  namespace packages work without them, but explicit `__init__.py` is what the
+  LiveKit Agents CLI's own module-discovery code
+  (`livekit/agents/cli/discover.py`) expects when walking parent directories looking
+  for package boundaries (confirmed while researching P0.2 below).
+
+**Verification**
+
+- `find . -maxdepth 3` before and after, diffed by eye against the `ARCHITECTURE.md`
+  Sec5 tree — exact match.
+- Scanned every new file for secret-shaped strings before staging — none found
+  (expected; these are docstring-only placeholders).
+- `git status` after staging → exactly the 20 new files intended, nothing else.
+
+---
+
+## 2026-08-17 — Phase 0: Verified LiveKit Agents SDK surface (P0.2 completion)
+
+**What happened**
+
+- Read the actual installed `livekit-agents==1.6.10` source directly — not a
+  tutorial, not memory — under `.venv/Lib/site-packages/livekit/`, and ran real
+  `inspect.signature()` calls against the installed plugin classes to confirm
+  constructor defaults, per `CLAUDE.md` rule #2 and `CLAUDE_CODE_PROMPTS.md` P0.2.
+- Wrote `docs/SDK_NOTES.md` covering the four things P0.2 asks for: session/agent
+  primitives, function tool definition, data channel publishing, and worker
+  entrypoint registration.
+- **The headline finding:** the entrypoint pattern has moved again since the
+  `VoicePipelineAgent` → `AgentSession` change most "1.0" tutorials already know
+  about. The classic `cli.run_app(WorkerOptions(entrypoint_fnc=...))` still runs, but
+  its own docstring in the installed package calls it "the (deprecated) rich Python
+  CLI [...] being phased out in favor of [...] `AgentServer`." The current pattern is
+  `server = AgentServer()` plus a `@server.rtc_session(agent_name=...)` decorator
+  around the entrypoint function, with the `AgentServer` instance stored in a
+  module-level variable literally named `app`, `server`, or `agent` — the CLI's
+  `discover.py` looks for exactly those three names, in that priority order, when
+  resolving `python -m livekit.agents start agent/main.py`.
+- Found that `RunContext` (the object passed into a `@function_tool`-decorated
+  method) doesn't carry the room directly, but `get_job_context()` — a
+  `contextvars.ContextVar` lookup — does, and works from *anywhere* inside a running
+  job, including deep inside a tool call. This means `agent/citations.py` can call
+  `get_job_context().room.local_participant.publish_data(...)` without `TwinAgent`
+  needing to manually thread a `JobContext` through its constructor.
+- Found and documented a real, concrete env-var mismatch before it became a Phase 1
+  bug: `livekit-plugins-google`'s `LLM` class resolves its API key as
+  `api_key if given else os.environ.get("GOOGLE_API_KEY")` — it reads
+  `GOOGLE_API_KEY`, not `GEMINI_API_KEY`, which is what this project's `.env` and
+  `DEPLOYMENT.md` actually use. Confirmed by reading
+  `livekit/plugins/google/llm.py` line 196 directly, not by guessing. Documented the
+  fix for Phase 1: pass `api_key=os.environ["GEMINI_API_KEY"]` explicitly in
+  `agent/config.py` rather than introducing a second, duplicate env var.
+- Also confirmed `silero.VAD` is instantiated via the classmethod `VAD.load(...)`,
+  not `VAD()` directly — an easy one-line mistake to make from memory.
+- Added `docs/SDK_NOTES.md` to `README.md`'s document index table (it was already
+  referenced in `CLAUDE.md`'s documentation map from the original template, but
+  missing from `README.md`'s table — the same category of gap the DEV_JOURNAL.md row
+  had earlier).
+
+**Why**
+
+This is the single most repeated instruction across every doc in this project
+(`CLAUDE.md` rule #2, `README.md`'s ground rules, `BUILD_PLAN.md` Phase 1, every
+relevant prompt in `CLAUDE_CODE_PROMPTS.md`) for a concrete reason: the framework has
+now changed its top-level entrypoint pattern *twice* in ways a plausible-sounding
+tutorial from six months ago would get wrong, and the `GOOGLE_API_KEY` vs
+`GEMINI_API_KEY` mismatch is exactly the kind of bug that would otherwise surface as
+a confusing runtime error deep into Phase 1, several layers away from its actual
+one-line cause. Reading the installed source first turns both into a documented fact
+instead of a debugging session.
+
+**Decisions made**
+
+- `agent/main.py` will use the `AgentServer` + `@server.rtc_session` pattern, not
+  `WorkerOptions` + `cli.run_app`, when Phase 1 writes real code — the deprecated
+  path was ruled out now specifically so Phase 1 doesn't have to make this call under
+  time pressure.
+- `agent/config.py` will explicitly pass `api_key=` to `google.LLM(...)` from
+  `GEMINI_API_KEY` rather than setting `GOOGLE_API_KEY` as a second copy of the same
+  secret in the environment.
+
+**Verification**
+
+- Every claim in `docs/SDK_NOTES.md` traces to either a direct source-file read
+  (with file path cited inline) or a real `inspect.signature()`/`isinstance` check
+  run against the installed package in this machine's `.venv` — not to documentation
+  site prose or training-data recall.
+- Scanned `docs/SDK_NOTES.md` and the `README.md` diff for secret-shaped strings
+  before staging — none found.
+- `git status` after staging → exactly `docs/SDK_NOTES.md` (new) and `README.md`
+  (modified), nothing else swept in.
