@@ -255,3 +255,52 @@ package installed first, which is now done.
   versions across the board (`1.6.10`).
 - Scanned `pyproject.toml` and `uv.lock` for secret-shaped strings before staging —
   none found (expected; lockfiles contain package hashes, not credentials).
+
+---
+
+## 2026-08-17 — Phase 0: Switch journal to chronological (oldest-first) order
+
+**What happened**
+
+- Reordered all four existing entries in this file from newest-first (LIFO) to
+  oldest-first (FIFO) — the 2026-08-16 doc-review entry now leads, and each
+  subsequent entry follows in the order it actually happened, ending with whichever
+  entry was written most recently.
+- Updated the "About this journal" section's convention line from "Newest entries are
+  at the top" to "Entries are appended in chronological order — oldest at the top,
+  most recent at the bottom. New entries always go at the **end** of the file."
+- Added a superseded-note on the old "journal entries are ordered newest-first"
+  decision recorded in the 2026-08-16 protocol entry, rather than silently deleting or
+  rewriting it — the point of a journal is that past decisions stay visible even after
+  they're reversed, including the reversal itself.
+- Committed the reorder itself (`6ba9481`) as a work commit — pure reordering plus the
+  one convention-line edit, no content changes to any existing entry — separate from
+  this entry describing it.
+
+**Why**
+
+Newest-first was the original choice because it optimizes for "catch up fast
+mid-project," mirroring `CLAUDE.md`'s "Current status" section. Oldest-first optimizes
+for a different, and for this file's actual purpose, more important read: interview
+prep means re-reading the whole thing as a narrative — how the project actually
+unfolded, decision by decision — not scanning for the latest status. A journal read
+top-to-bottom in the order things happened is easier to turn into a spoken answer
+("first I did X, which led to Y, which is why Z") than one read bottom-to-top.
+
+**Decisions made**
+
+- Chronological order is now the permanent convention for this file: every future
+  entry gets appended at the end, never inserted at the top.
+- Chose to annotate the superseded decision inline rather than edit it away, to keep
+  the journal itself honest about its own history — an editorial call consistent with
+  the file's stated purpose.
+
+**Verification**
+
+- `git diff --stat` before staging → 148 insertions / 146 deletions, confirming the
+  change was a reorder plus small header edits, not a content rewrite (the 2-line
+  delta is the convention-note line and the superseded-note annotation).
+- Re-read the full file top to bottom after the edit to confirm entries now run
+  2026-08-16 (doc review) → 2026-08-16 (protocol) → 2026-08-17 (env fixes) →
+  2026-08-17 (venv/deps), in the correct chronological order.
+- Scanned for secret-shaped strings before staging — none found.
