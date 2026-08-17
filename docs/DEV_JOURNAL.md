@@ -459,3 +459,140 @@ the file expecting it to be current.
 
 - Scanned for secret-shaped strings before staging — none found.
 - `git status` after staging → only `CLAUDE.md`.
+
+---
+
+## 2026-08-17 — Phase 1: Audio round-trip (live-verified)
+
+**What happened**
+
+Built and live-tested the first real pipeline code, following the plan in
+`BUILD_PLAN.md` Phase 1 / `CLAUDE_CODE_PROMPTS.md` P1.1+P1.3 combined. Went through
+plan mode first since this was the first non-trivial implementation step in the repo.
+
+- **`agent/config.py`**: exposes `GEMINI_API_KEY` (re-passed explicitly to
+  `google.LLM` since the plugin reads `GOOGLE_API_KEY` by default — the Phase 0
+  finding) and `GEMINI_MODEL` with a default. Added an explicit
+  `dotenv.load_dotenv()` call.
+- **`agent/main.py`**: `AgentServer()` at module level, `@server.rtc_session()`
+  decorating the entrypoint, `AgentSession` wired with `deepgram.STT()`,
+  `google.LLM(...)`, `deepgram.TTS()`, `silero.VAD.load()`, and
+  `livekit.agents.inference.TurnDetector()` for semantic turn detection (FR-2.2).
+  Trivial, no-persona instructions — no retrieval, no owner name — per P1.1's
+  explicit "a friendly assistant, no retrieval yet." Structured logging on
+  `agent_state_changed`, `user_state_changed`, `user_input_transcribed`, and
+  `conversation_item_added`. Greeting via `session.generate_reply(...)` on start,
+  for FR-1.6.
+
+**Three real bugs, caught by running the thing instead of trusting the plan**
+
+The plan (written from `SDK_NOTES.md`'s Phase 0 research plus reasonable-sounding
+assumptions) got three separate things wrong that only surfaced by actually running
+the worker against LiveKit Cloud:
+
+1. **`agent_name="voice-twin"` broke automatic dispatch.** Following the SDK's own
+   docstring example too literally, the first version of `agent/main.py` passed
+   `agent_name="voice-twin"` to `@server.rtc_session(...)`. Read closely, the SDK's
+   own field docstring says a non-empty `agent_name` "enable[s] explicit dispatch...
+   jobs will not be dispatched to rooms automatically" — the exact opposite of
+   FR-1.4. Caught by reading that docstring *before* the first live test, not by
+   debugging a mysteriously-idle worker. Fixed by dropping `agent_name` entirely
+   (default `""`), confirmed by the "registered worker" log line switching from
+   `"agent_name": "voice-twin"` to `"agent_name": ""`.
+2. **`uv run` does not auto-load `.env`.** The Phase 1 plan explicitly claimed
+   otherwise, reasoning from `uv run --help` showing `--env-file`/`--no-env-file`
+   flags and assuming that meant env-file loading was on by default. It isn't —
+   confirmed by `uv run python -c "import os; print('GEMINI_API_KEY' in os.environ)"`
+   printing `False`. This is exactly the "should work" trap `CLAUDE.md` warns
+   against: the flags' *existence* was real, the *inferred default behavior* was a
+   guess, and the guess was wrong. Fixed with an explicit `python-dotenv` dependency
+   and `load_dotenv()` in `agent/config.py`, which is also more portable than
+   relying on `uv run`'s flags once this deploys somewhere that isn't `uv run`.
+3. **`gemini-2.5-flash` (the plugin's own compiled-in default, and
+   `DEPLOYMENT.md`'s original documented default) is dead.** First live LLM call
+   returned `HTTP 404: "This model models/gemini-2.5-flash is no longer available to
+   new users."` — despite the model still appearing in the `/models` listing
+   endpoint, which is what Phase 0's verification had checked. Listing a model and
+   being eligible to call it are different things. Tested candidates directly via
+   `curl` against `generateContent` (not the listing endpoint) before touching code:
+   `gemini-2.5-flash` and `gemini-2.5-flash-lite` both 404 the same way;
+   `gemini-flash-latest` (a rolling alias Google maintains to its current
+   recommended flash model) works, resolving to `gemini-3.7-flash` at time of
+   writing. Switched the default in `agent/config.py`, `.env.example`, and
+   `DEPLOYMENT.md` to the alias specifically so the *next* pinned-version retirement
+   doesn't repeat this exact break.
+
+A fourth thing was corrected before it became a bug: `agent/main.py`'s first draft
+logged via `session.on("metrics_collected", ...)`, which live testing immediately
+flagged with a runtime `DeprecationWarning` — *"metrics_collected is deprecated. Use
+session_usage_updated for usage tracking and ChatMessage.metrics for per-turn
+latency."* Rewrote the handler to listen on `conversation_item_added` and read
+`ChatMessage.metrics` instead, which turned out to be a strictly better fit anyway:
+it's per-conversation-turn rather than per-pipeline-stage-event, and its
+`e2e_latency` field is exactly NFR-1.1's "end-of-utterance to first audio byte"
+definition, pre-computed.
+
+**Live verification (via LiveKit Cloud's built-in Console, not the standalone
+Agents Playground — that tool now redirects into the Cloud dashboard's own "Agent
+Console")**
+
+All `BUILD_PLAN.md` Phase 1 exit criteria confirmed on a real session
+(room `console-ecabc7a7`, 44s duration):
+
+- Worker registered and logged `"registered worker"` with `agent_name: ""`.
+- Browser joined, mic permission granted, worker dispatched automatically — no
+  manual step.
+- Transcripts were accurate: `'Hi.'`, `'You hear my voice?'`, `'Introduce
+  yourself.'`, `'I said stop it.'` all matched what was actually said.
+- Bot replied in audible speech, confirmed by ear ("connected and it replied,
+  sounds decent").
+- **Barge-in worked**: `user_state` flipped to `speaking` at `13:20:20.285` while
+  the agent was mid-reply; `agent_state` flipped from `speaking` to `listening` at
+  `13:20:20.740` — about 455ms later. That's state-transition-log granularity, not
+  an instrumented audio-cutoff measurement, and it's somewhat over FR-2.4's 300ms
+  target — worth a tighter measurement later, but functionally the agent did stop
+  talking when talked over, which is what Phase 1's exit criterion actually asks for.
+
+**Honest latency finding — the one thing not to gloss over**
+
+The Console's own session summary reported **average LLM time-to-first-token:
+2,479ms** and **average end-to-end latency: 3,286ms** across the session. My own
+per-turn logs from `ChatMessage.metrics` back this up and show the spread: one reply
+came back in a very reasonable `llm_ttft=0.97s` / `e2e_latency=1.77s`, another spiked
+to `llm_ttft=7.01s` / `e2e_latency=7.84s` for no visible reason in the logs (no
+retry, no error — just a slow Gemini response). Both numbers are well above NFR-1.4's
+<500ms LLM-first-token target and NFR-1.1's <1.5s median end-to-end target.
+
+Subjectively, the owner described it as "not slow and not so fast, replies in a sec
+or two" — which doesn't match the measured 2.5–3.3s averages. That gap between felt
+latency and measured latency is worth remembering for the write-up: perceived
+latency and instrumented latency are genuinely different things, and only one of
+them is trustworthy evidence. This isn't a Phase 1 blocker — `BUILD_PLAN.md`'s exit
+bar for this phase is the much softer "feels under ~2s," and formal NFR-1 tuning is
+explicitly later work (Phase 3 once the real system prompt exists, hardened in
+Phase 6) — but it's now a concrete, numbers-backed item to revisit rather than a
+vague "latency might be an issue."
+
+**Decisions made**
+
+- `agent/main.py` uses no `agent_name`, keeping automatic dispatch (FR-1.4) as the
+  permanent choice, not just a Phase 1 default.
+- `GEMINI_MODEL` defaults to the `gemini-flash-latest` alias rather than a pinned
+  version number, traded for a small amount of version-drift risk in exchange for
+  not repeating this exact failure mode.
+- Latency tuning is explicitly deferred, not ignored — logged here with real
+  numbers specifically so it isn't lost before Phase 3/6.
+
+**Verification**
+
+- Live session against real LiveKit Cloud infrastructure (not a mock/simulation),
+  observed via both the Console's own UI and this project's own structured worker
+  logs simultaneously, cross-checked against each other.
+- `uv run python -c "import agent.main"` sanity-checked after every code change,
+  before spending time on a live run.
+- Direct `curl` calls against Google's `generateContent` endpoint verified model
+  availability before changing code, rather than inferring it from the `/models`
+  listing or from the plugin's error message alone.
+- Scanned every changed file for secret-shaped strings before staging — none found.
+- `git status` after staging → exactly the 7 files in commit `3389d18`, nothing
+  extra swept in.
