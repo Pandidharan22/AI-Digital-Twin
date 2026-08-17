@@ -24,6 +24,63 @@ Newest entries are at the top.
 
 ---
 
+## 2026-08-17 — Phase 0: Env fixes and toolchain verification
+
+**What happened**
+
+- Renamed `SUPABASE_CONNECTION_STRING` → `DATABASE_URL` in `.env` to match the naming
+  every doc (`DEPLOYMENT.md`, the Phase 2 ingestion prompts) actually expects. Also
+  trimmed a trailing space that had snuck onto the end of `SUPABASE_URL`.
+- Verified the Gemini key by calling Google's `generativelanguage.googleapis.com/v1beta/models`
+  endpoint directly with it. Got back `HTTP 200` and a real model list including
+  `gemini-2.5-flash` — so the unusual `AQ.`-prefixed format flagged yesterday was a
+  false alarm; it's a valid key, just not the more common `AIzaSy...` shape. Confirmed
+  by hitting the actual API rather than pattern-matching the string, which is the only
+  way to really know a credential works.
+- Checked the three remaining Phase 0 toolchain items from `BUILD_PLAN.md`:
+  - **Python** — `python --version` → 3.12.10 (spec requires 3.11+, satisfied). Note:
+    `python3` is not on PATH on this machine (Windows App Execution Alias stub only);
+    use `python`, not `python3`, in any scripts or docs going forward.
+  - **Node** — `node --version` → v22.15.0 (spec requires 18+, satisfied).
+  - **uv** — not installed. Installed via Astral's official installer
+    (`irm https://astral.sh/uv/install.ps1 | iex`), which placed `uv.exe` in
+    `C:\Users\pandi\.local\bin` and added that directory to the persistent **User**
+    `PATH` (verified via the Windows registry, not just the installer's own claim).
+    Confirmed the binary itself works by invoking it with a full path
+    (`uv 0.12.5`). Bare `uv` doesn't resolve *inside this same tool session* because
+    that session's shell process started before the PATH update and Windows doesn't
+    retroactively push registry PATH changes into already-running processes — this is
+    expected and resolves itself the next time a terminal is opened fresh.
+
+**Why**
+
+`DATABASE_URL` naming matters now, before Phase 2, because it's exactly the kind of
+mismatch that turns into a silent `None`/connection failure buried three layers into
+ingestion code — cheaper to fix while it's one line in `.env` than to debug later
+through a stack trace. Verifying the Gemini key against the real endpoint rather than
+just eyeballing its shape is the same principle applied to credentials: a format
+guess is not a verification.
+
+**Decisions made**
+
+- Standardized on `python` (not `python3`) as the interpreter command for this project
+  on this machine, since that's what's actually on PATH.
+- Phase 0's toolchain checklist is now fully satisfied — nothing blocks starting the
+  P0.1 repository skeleton.
+
+**Verification**
+
+- `curl` against the Gemini `models` endpoint → `HTTP_STATUS:200`, valid JSON with
+  `gemini-2.5-flash` present.
+- `python --version` → `3.12.10`; `node --version` → `v22.15.0`.
+- `uv.exe --version` via full path → `uv 0.12.5`; confirmed
+  `[System.Environment]::GetEnvironmentVariable('Path','User')` includes
+  `C:\Users\pandi\.local\bin`.
+- `.env` re-read after edits to confirm `DATABASE_URL` present, no stray whitespace,
+  and no other lines accidentally touched.
+
+---
+
 ## 2026-08-16 — Phase 0: Formalize the log-then-commit journal protocol
 
 **What happened**
