@@ -596,3 +596,31 @@ vague "latency might be an issue."
 - Scanned every changed file for secret-shaped strings before staging — none found.
 - `git status` after staging → exactly the 7 files in commit `3389d18`, nothing
   extra swept in.
+
+---
+
+## 2026-08-17 — Phase 1: Marked complete in CLAUDE.md status
+
+**What happened**
+
+- Checked off Phase 1 in `CLAUDE.md` and rewrote "Now working on" to point at
+  Phase 2, carrying forward the two open, non-blocking items from the Phase 1 entry
+  above: the measured LLM latency (2.5s average TTFT, one 7s spike) and the
+  approximate barge-in timing (~455ms by log granularity, not a precise
+  instrumented cutoff) — both real numbers worth revisiting once Phase 3's real
+  system prompt exists, not vague TODOs.
+
+**Why**
+
+Same reasoning as the Phase 0 equivalent entry: `CLAUDE.md`'s status section exists
+so a session with no memory of this conversation can orient immediately, and that
+only works if it's kept current the moment a phase actually closes.
+
+**Decisions made**
+
+- None beyond the status update itself.
+
+**Verification**
+
+- Scanned for secret-shaped strings before staging — none found.
+- `git status` after staging → only `CLAUDE.md`.
