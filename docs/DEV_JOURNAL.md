@@ -431,3 +431,31 @@ instead of a debugging session.
   before staging — none found.
 - `git status` after staging → exactly `docs/SDK_NOTES.md` (new) and `README.md`
   (modified), nothing else swept in.
+
+---
+
+## 2026-08-17 — Phase 0: Marked complete in CLAUDE.md status
+
+**What happened**
+
+- Checked off Phase 0 in `CLAUDE.md`'s "Current status" section and rewrote "Now
+  working on" / "Blocked by" to point at Phase 1, carrying forward the two open
+  follow-ups from `docs/SDK_NOTES.md` (the `GEMINI_API_KEY`/`GOOGLE_API_KEY` mismatch
+  and the missing turn-detector plugin) so a fresh session doesn't have to re-read
+  the full SDK notes just to know what's still open.
+
+**Why**
+
+`CLAUDE.md` explicitly says this section exists so "a new session gets oriented
+fast" — leaving it stale after finishing a phase defeats that purpose the first time
+someone (or a future Claude Code session with no memory of this conversation) opens
+the file expecting it to be current.
+
+**Decisions made**
+
+- None beyond the status update itself.
+
+**Verification**
+
+- Scanned for secret-shaped strings before staging — none found.
+- `git status` after staging → only `CLAUDE.md`.
