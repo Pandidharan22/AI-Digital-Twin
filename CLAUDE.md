@@ -136,19 +136,28 @@ Read the relevant doc **before** implementing:
 *Update this as you go — it's how a new session gets oriented fast.*
 
 - [x] Phase 0 — Accounts and scaffolding
-- [ ] Phase 1 — Audio round-trip
+- [x] Phase 1 — Audio round-trip
 - [ ] Phase 2 — Corpus and ingestion
 - [ ] Phase 3 — Grounding and citations
 - [ ] Phase 4 — UX
 - [ ] Phase 5 — Deployment
 - [ ] Phase 6 — Testing and submission
 
-**Now working on:** Ready to start Phase 1 (audio round-trip). Repo skeleton and
-verified SDK surface (`docs/SDK_NOTES.md`) are both in place — build `agent/main.py`
-next using the `AgentServer` + `@server.rtc_session` pattern documented there, not
-`WorkerOptions` + `cli.run_app`.
-**Blocked by:** Nothing. Two known follow-ups carried into Phase 1: (1) pass
-`api_key=os.environ["GEMINI_API_KEY"]` explicitly to `google.LLM(...)` — the plugin
-reads `GOOGLE_API_KEY` by default, which isn't set; (2) `livekit-plugins-turn-detector`
-isn't installed yet, needed for FR-2.2's semantic turn detection.
-**Decisions made this session:** [log them so ADRs can be filled in later]
+**Now working on:** Ready to start Phase 2 (corpus and ingestion). `agent/main.py`
+and `agent/config.py` are implemented and live-verified against LiveKit Cloud — worker
+registers, joins automatically, transcribes, replies audibly, and stops on barge-in.
+No retrieval, no persona, no frontend yet — those are Phases 2-4.
+**Blocked by:** Nothing functionally. Two things worth attention when they become
+relevant: (1) measured latency (LLM TTFT averaged 2.5s, one turn spiked to 7s) is well
+above NFR-1.4's <500ms target — not a Phase 1 blocker per `BUILD_PLAN.md`'s softer
+"feels under ~2s" bar, but a concrete number to revisit once Phase 3's real prompt
+exists; (2) barge-in stops speech in ~455ms by log-timestamp granularity, a bit over
+FR-2.4's 300ms target — needs a tighter instrumented measurement later, not just
+state-transition timestamps. Full numbers in `docs/DEV_JOURNAL.md`'s 2026-08-17 Phase 1
+entry.
+**Decisions made this session:** `GEMINI_MODEL` defaults to the `gemini-flash-latest`
+rolling alias, not a pinned version — `gemini-2.5-flash` (the plugin's own compiled-in
+default) is confirmed dead (404 "no longer available to new users") despite still
+appearing in the `/models` listing. `agent/main.py` deliberately omits `agent_name` on
+`@server.rtc_session()` to keep automatic dispatch (FR-1.4) — a non-empty `agent_name`
+silently switches to explicit-dispatch-only.
