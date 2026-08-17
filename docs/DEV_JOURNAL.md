@@ -24,6 +24,70 @@ Newest entries are at the top.
 
 ---
 
+## 2026-08-17 — Phase 0: Virtual environment and LiveKit Agents dependencies
+
+**What happened**
+
+- Created `pyproject.toml` via `uv init --bare` — the `--bare` flag matters here: a
+  normal `uv init` also scaffolds a sample `README.md`, a `main.py`, and re-runs `git
+  init`, all of which this repo already has in a different shape (docs already
+  written, `ARCHITECTURE.md` §5 specifies the real directory layout, git already
+  initialized). `--bare` produces only the `pyproject.toml` itself: project name,
+  description, `requires-python = ">=3.11"`.
+- Ran `uv add livekit-agents livekit-plugins-deepgram livekit-plugins-google
+  livekit-plugins-silero` — the exact package set named in
+  `CLAUDE_CODE_PROMPTS.md` P0.2. This did three things in one command: created
+  `.venv` (a project-local virtual environment, isolating these dependencies from
+  anything else installed globally on the machine), resolved a full dependency graph
+  (87 packages once transitive dependencies are included — e.g. `onnxruntime` for
+  Silero's local VAD model, `google-genai` for the Gemini plugin, `opentelemetry-*`
+  for the Agents framework's built-in tracing), and wrote `uv.lock`, which pins every
+  resolved version exactly so a clean clone reproduces the identical environment
+  rather than "whatever the latest compatible version happens to be today."
+- Confirmed `.venv` is excluded from git (`.gitignore:14:.venv/`) and only
+  `pyproject.toml` + `uv.lock` were staged — the dependency *declaration* and *lock*
+  are committed; the actual installed environment is not and should never be (it's
+  regenerated locally with `uv sync` or `uv add`, and committing it would bloat the
+  repo with platform-specific binaries).
+- Verified the installed versions directly rather than trusting the install log:
+  `livekit-agents==1.6.10`, `livekit-plugins-deepgram==1.6.10`,
+  `livekit-plugins-google==1.6.10`, `livekit-plugins-silero==1.6.10`.
+
+**Why**
+
+This was done deliberately *before* the full repository skeleton (P0.1), at the
+owner's request. It's a reasonable reordering: nothing about scaffolding empty
+`agent/`, `ingestion/`, `api/`, `web/` directories depends on dependencies being
+installed, but confirming the LiveKit Agents SDK actually installs cleanly on this
+machine, at this Python version, *does* matter before writing any structure around
+it. It also sets up the very next step for free: `CLAUDE.md` rule #2 and
+`CLAUDE_CODE_PROMPTS.md` P0.2 both insist that no pipeline code gets written from
+memory — the installed package must be read directly to find the real API surface
+(`AgentSession`, not the pre-1.0 `VoicePipelineAgent`). That reading step needs the
+package installed first, which is now done.
+
+**Decisions made**
+
+- Used `uv init --bare` instead of hand-writing `pyproject.toml`, so the file's
+  formatting and required fields match what `uv` itself expects rather than a
+  guessed-at schema.
+- Did not add a turn-detector plugin (`livekit-plugins-turn-detector`) or noise
+  cancellation yet — staying scoped to exactly the P0.2 prompt's package list.
+  SRS FR-2.2 requires semantic turn detection, so this is a flagged follow-up for
+  Phase 1, not an oversight.
+
+**Verification**
+
+- `git status` after `uv add` → only `pyproject.toml` and `uv.lock` untracked;
+  `.venv/` did not appear.
+- `git check-ignore -v .venv` → matched `.gitignore:14:.venv/`.
+- `uv pip list | grep livekit` → all four target packages present at matching
+  versions across the board (`1.6.10`).
+- Scanned `pyproject.toml` and `uv.lock` for secret-shaped strings before staging —
+  none found (expected; lockfiles contain package hashes, not credentials).
+
+---
+
 ## 2026-08-17 — Phase 0: Env fixes and toolchain verification
 
 **What happened**
