@@ -240,7 +240,7 @@ Confirmed by direct import + `inspect.signature()`, not the docs site:
 |---|---|---|---|
 | Deepgram STT | `from livekit.plugins import deepgram` | `deepgram.STT(*, model=..., ...)` | `model="nova-3"` |
 | Deepgram TTS | `from livekit.plugins import deepgram` | `deepgram.TTS(*, model=..., ...)` | `model="aura-2-andromeda-en"` |
-| Gemini LLM | `from livekit.plugins import google` | `google.LLM(*, model=..., ...)` | `model="gemini-2.5-flash"` (matches `DEPLOYMENT.md`'s `GEMINI_MODEL`) |
+| Gemini LLM | `from livekit.plugins import google` | `google.LLM(*, model=..., ...)` | `model="gemini-2.5-flash"` — **compiled-in default, but see the callout below: this specific value 404s live** |
 | Silero VAD | `from livekit.plugins import silero` | `silero.VAD.load(...)` | **classmethod, not a plain constructor** — `VAD()` directly will not work |
 
 All four read their API key from the matching env var by default
@@ -258,6 +258,18 @@ valid key under a different name. `agent/config.py` needs to either pass
 or set `os.environ["GOOGLE_API_KEY"]` from `GEMINI_API_KEY` at startup. Passing it
 explicitly is cleaner — it keeps the env var naming in `.env` matching the rest of this
 project's docs without silently duplicating it into a second env var name.
+
+**Second confirmed gotcha, found during live Phase 1 testing:** the plugin's compiled-in
+default model, `gemini-2.5-flash`, returns a live `HTTP 404` —
+`"This model models/gemini-2.5-flash is no longer available to new users"` — when
+actually called with `generateContent`, even though it still appears in the `/models`
+listing endpoint (listing != eligibility). Confirmed by direct `curl` against
+Google's API, not the plugin's own error message alone. `gemini-2.5-flash-lite` is
+also retired the same way. `gemini-flash-latest` — a rolling alias Google maintains to
+whatever the current recommended flash model is — works (verified via a real
+`generateContent` 200, resolving to `gemini-3.7-flash` at time of writing) and is what
+`agent/config.py`'s `GEMINI_MODEL` default now uses instead, specifically to avoid
+repeating this breakage the next time a pinned version number gets retired.
 
 ---
 

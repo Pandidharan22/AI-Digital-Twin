@@ -8,4 +8,5 @@ dependencies = [
     "livekit-plugins-deepgram>=1.6.10",
     "livekit-plugins-google>=1.6.10",
     "livekit-plugins-silero>=1.6.10",
+    "python-dotenv>=1.2.3",
 ]
