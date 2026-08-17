@@ -135,7 +135,7 @@ Read the relevant doc **before** implementing:
 
 *Update this as you go — it's how a new session gets oriented fast.*
 
-- [ ] Phase 0 — Accounts and scaffolding
+- [x] Phase 0 — Accounts and scaffolding
 - [ ] Phase 1 — Audio round-trip
 - [ ] Phase 2 — Corpus and ingestion
 - [ ] Phase 3 — Grounding and citations
@@ -143,6 +143,12 @@ Read the relevant doc **before** implementing:
 - [ ] Phase 5 — Deployment
 - [ ] Phase 6 — Testing and submission
 
-**Now working on:** [phase]
-**Blocked by:** [anything]
+**Now working on:** Ready to start Phase 1 (audio round-trip). Repo skeleton and
+verified SDK surface (`docs/SDK_NOTES.md`) are both in place — build `agent/main.py`
+next using the `AgentServer` + `@server.rtc_session` pattern documented there, not
+`WorkerOptions` + `cli.run_app`.
+**Blocked by:** Nothing. Two known follow-ups carried into Phase 1: (1) pass
+`api_key=os.environ["GEMINI_API_KEY"]` explicitly to `google.LLM(...)` — the plugin
+reads `GOOGLE_API_KEY` by default, which isn't set; (2) `livekit-plugins-turn-detector`
+isn't installed yet, needed for FR-2.2's semantic turn detection.
 **Decisions made this session:** [log them so ADRs can be filled in later]
