@@ -1,11 +1,11 @@
-# Corpus (placeholder)
+# Corpus
 
-Source documents for ingestion: `resume.pdf`, `context.md` (handwritten, see
-`docs/DATA_INGESTION.md` Sec2), `projects/`, and optionally `linkedin/` (official
+Source documents for ingestion: `AI Engineer Resume.pdf`, `context.md` (handwritten,
+see `docs/DATA_INGESTION.md` Sec2), and optionally `projects/`/`linkedin/` (official
 data export only -- see ADR-003).
 
-Empty at scaffolding time. Populated in Phase 2.
-
-**Privacy decision pending:** `ARCHITECTURE.md` Sec5 notes this directory should be
-gitignored if its contents are private (resumes often carry a phone number/address).
-Not yet added to `.gitignore` -- revisit once real documents land here.
+**Privacy decision (resolved 2026-08-18):** these files carry personal contact info
+(phone, email), so `corpus/*` is gitignored except this README -- source documents are
+ingested into Supabase and the deployed bot can cite them, but the raw files never land
+in public git history. Anyone cloning the repo needs to supply their own corpus files
+locally before running ingestion.

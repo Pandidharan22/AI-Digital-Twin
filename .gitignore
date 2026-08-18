@@ -35,3 +35,9 @@ Thumbs.db
 
 # Logs
 *.log
+
+# Corpus source documents -- personal/contact info (resume, context.md), kept
+# local only. Ingested into Supabase, never pushed to git. README.md stays
+# tracked so the directory's purpose is documented even though it's empty here.
+corpus/*
+!corpus/README.md
