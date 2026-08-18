@@ -624,3 +624,99 @@ only works if it's kept current the moment a phase actually closes.
 
 - Scanned for secret-shaped strings before staging — none found.
 - `git status` after staging → only `CLAUDE.md`.
+
+---
+
+## 2026-08-18 — Phase 2: Corpus content — context.md interview, identity config, privacy decision
+
+**What happened**
+
+- Found `corpus/AI Engineer Resume.pdf` already sitting in the repo, untracked, from
+  before this session — read it directly (not asked-about-secondhand) to ground
+  everything that followed in real content: four projects (JobHunt AI, the
+  Self-Reflective RAG platform, a loan risk-scoring system, and the Project Nexus
+  homelab), a freelance role, and CS undergrad education.
+- Ran the `DATA_INGESTION.md` §2 interview conversationally rather than handing over a
+  blank template — asked the seven questions the doc lists (current work, why this
+  field, strongest project and what was actually hard about it, depth map, what's
+  being looked for, a real failure, how learning happens) one round, got real answers.
+- For the "strongest project" answer, the owner pointed at a specific GitHub repo
+  (`Heuristic-Self-Reflective-RAG`) rather than re-describing it from memory. Fetched
+  the actual README via `WebFetch` against the raw GitHub URL (`gh` CLI isn't
+  installed on this machine, confirmed by `command not found`, so fell back to the
+  documented alternative) instead of taking the resume's one-line project summary at
+  face value. That surfaced real substance the resume didn't carry: a heuristic risk
+  score built from mean similarity + score spread + proportional penalties, a
+  configurable 0.70 threshold, an autonomous top_k-expansion retry, and — the genuinely
+  interesting part — a benchmark finding that expanding context for out-of-domain
+  queries *increases* hallucination risk rather than helping, which inverted the
+  owner's own initial intuition. That level of detail is exactly what `context.md` is
+  supposed to capture and a resume bullet can't.
+- Wrote `corpus/context.md` (1,377 words, within the 1,000–2,000 target) with one `##`
+  section per interview topic, so the ingestion chunker (once built) splits on real
+  topic boundaries rather than arbitrary token windows, per `DATA_INGESTION.md` §3.
+  First person, conversational, written to be spoken by TTS rather than read as
+  prose — matches `CLAUDE.md` rule #7 even though this file feeds retrieval text, not
+  direct bot output, on the theory that grounding text closer to speakable phrasing
+  reduces how much the LLM has to transform it.
+- Set `OWNER_NAME=Pandidharan Gopiraj` and added `RETRIEVAL_THRESHOLD=0.35`,
+  `RETRIEVAL_TOP_K=4`, `EMBEDDING_MODEL=BAAI/bge-small-en-v1.5` to `.env` — these were
+  documented in `.env.example` and referenced in `agent/config.py`'s docstring since
+  Phase 0/1 but never actually set, since nothing read them yet. `GITHUB_USERNAME` was
+  already correctly set to `Pandidharan22` from an earlier session.
+- **Privacy decision, previously left open:** `corpus/README.md` had flagged since
+  Phase 0 that the directory should probably be gitignored once real documents with
+  personal contact info landed in it, without deciding. Surfaced it explicitly rather
+  than assuming either way, since it's a hard-to-reverse call once something is pushed
+  to public git history. Asked; the owner chose to gitignore `corpus/*` (except
+  `README.md`) rather than commit source documents or scrub them — the resume and
+  `context.md` carry a phone number and email. Source files stay local-only, get
+  ingested into Supabase, and the deployed bot can still cite them by filename; they
+  just never enter git history. Updated `.gitignore` and rewrote `corpus/README.md`'s
+  pending-note into a resolved decision record.
+
+**Why**
+
+The interview-then-write approach (rather than asking for a document dump) exists
+because `context.md`'s entire value proposition, per `DATA_INGESTION.md`, is content a
+resume has no room for — the "what was actually hard" and "what did you learn from
+failing" answers only come out through conversation, not document extraction. Fetching
+the real README instead of trusting the resume's one-liner mattered for the same
+reason CLAUDE.md rule #2 insists on reading the installed SDK instead of reproducing a
+tutorial from memory: a plausible-sounding secondhand summary and a verified primary
+source are not the same thing, and the gap between them is exactly where a citation-
+grounded bot would eventually get caught fabricating or flattening detail.
+
+The privacy call was worth pausing for rather than defaulting silently, because
+`.env`-style secrets aren't the only thing rule #1 should cover in spirit — a phone
+number in permanent public git history is a different, less reversible kind of
+exposure than the same number being spoken by the bot to one visitor at a time, even
+though the underlying fact is already going to be retrievable either way once the app
+is live.
+
+**Decisions made**
+
+- `corpus/context.md` is the canonical handwritten grounding document going forward;
+  future updates to it happen by editing the file directly, not by re-running the
+  interview from scratch.
+- `corpus/*` is gitignored except `README.md`. Anyone cloning this repo must supply
+  their own corpus files locally before ingestion will produce anything — documented
+  in the rewritten `corpus/README.md`, not left implicit.
+- `OWNER_NAME`, `RETRIEVAL_THRESHOLD`, `RETRIEVAL_TOP_K`, and `EMBEDDING_MODEL` are now
+  real, set values, not placeholders — `RETRIEVAL_THRESHOLD=0.35` and
+  `RETRIEVAL_TOP_K=4` are the `.env.example` defaults, carried forward unchanged;
+  actual threshold tuning against the spot-check queries is still open work for later
+  in Phase 2/3, not decided here.
+
+**Verification**
+
+- `wc -w corpus/context.md` → 1,377, inside the `DATA_INGESTION.md` §2 target range.
+- `git check-ignore -v` against both corpus source files and `.env` after the
+  `.gitignore` edit → all three correctly matched and excluded.
+- `git status --short` after the edit → only `.gitignore` and `corpus/README.md`
+  modified; the resume PDF and `context.md` correctly absent from the list.
+- `git diff` on the two staged files, grepped for secret-shaped patterns
+  (`AIza`, `github_pat_`, JWT `eyJ`, PEM headers, `postgresql://`, `api_key`) — zero
+  matches.
+- Committed the gitignore/README privacy fix (`61b6ecb`) as its own work commit,
+  separate from this journal entry, per the log-then-commit protocol.
