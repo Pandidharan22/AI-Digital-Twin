@@ -96,16 +96,18 @@ def _split_into_sections(lines: List[str]) -> dict:
 
 
 def _split_technical_skills(lines: List[str], source: str) -> List[RawSection]:
-    results: List[RawSection] = []
+    # DATA_INGESTION.md Sec1's resume row calls the chunk boundary "one skills
+    # block" (singular) -- one chunk for the whole section, not one per
+    # category. Splitting per category also produced several chunks under the
+    # 40-token floor (a bare "Frontend: React.js, ..." line), which would have
+    # silently dropped real content instead of merging it.
+    categories: List[str] = []
     category: str = ""
     items: List[str] = []
 
     def flush():
         if category:
-            text = _clean(f"{category}: {' '.join(items)}")
-            results.append(
-                RawSection(source, "resume", f"Technical Skills — {category}", text)
-            )
+            categories.append(f"{category}: {' '.join(items)}")
 
     for line in lines:
         if not line.strip():
@@ -118,7 +120,11 @@ def _split_technical_skills(lines: List[str], source: str) -> List[RawSection]:
         else:
             items.append(line)
     flush()
-    return results
+
+    if not categories:
+        return []
+    text = _clean(" ".join(categories))
+    return [RawSection(source, "resume", "Technical Skills", text)]
 
 
 def _split_projects(lines: List[str], source: str) -> List[RawSection]:
@@ -146,14 +152,16 @@ def _split_projects(lines: List[str], source: str) -> List[RawSection]:
 
 
 def _split_education(lines: List[str], source: str) -> List[RawSection]:
-    results: List[RawSection] = []
+    # Per-entry chunks (DATA_INGESTION.md's stated boundary) landed under the
+    # 40-token floor for this resume's two short entries -- combined into one
+    # "Education" chunk instead of losing the content, same reasoning as
+    # Technical Skills above.
+    entries: List[str] = []
     entry_lines: List[str] = []
 
     def flush():
         if entry_lines:
-            text = _clean(" ".join(entry_lines))
-            label = re.split(r"CGPA|Marks", text)[0].strip().rstrip(",")
-            results.append(RawSection(source, "resume", f"Education — {label}", text))
+            entries.append(_clean(" ".join(entry_lines)))
 
     for line in lines:
         if not line.strip():
@@ -164,7 +172,11 @@ def _split_education(lines: List[str], source: str) -> List[RawSection]:
         else:
             entry_lines.append(line)
     flush()
-    return results
+
+    if not entries:
+        return []
+    text = _clean(" ".join(entries))
+    return [RawSection(source, "resume", "Education", text)]
 
 
 def load(pdf_path: Path) -> List[RawSection]:
@@ -176,9 +188,9 @@ def load(pdf_path: Path) -> List[RawSection]:
 
     results: List[RawSection] = []
 
-    preamble = _clean(" ".join(sections.get("__preamble__", [])))
-    if preamble:
-        results.append(RawSection(source, "resume", "Contact Info", preamble))
+    # sections["__preamble__"] (name, tagline, phone, email) is intentionally
+    # not emitted as a chunk -- phone/email aren't content a public voice bot
+    # should surface as a "source", and it's below the token floor anyway.
 
     if sections.get("Objective"):
         text = _clean(" ".join(sections["Objective"]))
