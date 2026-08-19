@@ -992,3 +992,50 @@ that the section-splitting logic "should" work, is what caught it.
   only ever touches resume prose, no credentials).
 - `git status --short` after staging → only the two intended new/changed files.
 - Committed as `160db26`, separate from this journal entry.
+
+---
+
+## 2026-08-18 — Phase 2: Markdown loader for context.md
+
+**What happened**
+
+- Built `ingestion/loaders/markdown_loader.py`: split `context.md` on `##` headers via
+  regex, yielding one `RawSection` per topic block. Deliberately drops the file's `#`
+  title and its one-paragraph preamble ("This file exists to give a conversational AI
+  the answers a resume has no room for...") rather than treating it as a chunk — it's
+  commentary about the document itself, not something a visitor would ask the bot
+  about, and embedding it risked it surfacing as a retrieved "answer" to some
+  unrelated query.
+  a `load_corpus_markdown()` wrapper walks `corpus/**/*.md` and explicitly skips
+  `README.md` by name, since that file documents the directory, not the owner.
+- Ran it against the real `context.md` and printed every resulting chunk with its word
+  count: all 7 interview sections came back intact and correctly bounded, from 96
+  words ("What I'm looking for") to 449 words (the RAG project section) — the larger
+  one is over `DATA_INGESTION.md` §3's ~500-token ceiling once actually tokenized, but
+  splitting oversized sections further is explicitly the chunker's job, not the
+  loader's, so left as-is here by design.
+
+**Why**
+
+Markdown has none of the PDF loader's whitespace-collapse problems — the format
+already preserves structure — so this loader is a fraction of the size of the PDF one
+and didn't need the same investigative pass. The one real design decision was what
+*not* to chunk (the file's own self-description), which matters for the same reason
+`DATA_INGESTION.md` §3 cares about clean citation units generally: a chunk that answers
+"what is this document" rather than "what is true about the owner" is noise a retrieval
+threshold can't distinguish from a real answer.
+
+**Decisions made**
+
+- Loaders stay dumb about size limits — `markdown_loader.py` yields raw topic blocks
+  regardless of length; `chunker.py` (next) owns the floor/ceiling enforcement for
+  every source type uniformly, so that rule lives in exactly one place.
+
+**Verification**
+
+- Ran `load_corpus_markdown()` against the real `corpus/` directory — confirmed 7
+  chunks from `context.md`, zero from `README.md`, and read each chunk's opening text
+  to confirm section boundaries landed correctly.
+- Scanned the diff for secret-shaped strings before staging — none found.
+- `git status --short` after staging → only the one intended file.
+- Committed as `af8358b`, separate from this journal entry.
