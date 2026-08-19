@@ -137,27 +137,44 @@ Read the relevant doc **before** implementing:
 
 - [x] Phase 0 — Accounts and scaffolding
 - [x] Phase 1 — Audio round-trip
-- [ ] Phase 2 — Corpus and ingestion
+- [x] Phase 2 — Corpus and ingestion
 - [ ] Phase 3 — Grounding and citations
 - [ ] Phase 4 — UX
 - [ ] Phase 5 — Deployment
 - [ ] Phase 6 — Testing and submission
 
-**Now working on:** Ready to start Phase 2 (corpus and ingestion). `agent/main.py`
-and `agent/config.py` are implemented and live-verified against LiveKit Cloud — worker
-registers, joins automatically, transcribes, replies audibly, and stops on barge-in.
-No retrieval, no persona, no frontend yet — those are Phases 2-4.
-**Blocked by:** Nothing functionally. Two things worth attention when they become
-relevant: (1) measured latency (LLM TTFT averaged 2.5s, one turn spiked to 7s) is well
-above NFR-1.4's <500ms target — not a Phase 1 blocker per `BUILD_PLAN.md`'s softer
-"feels under ~2s" bar, but a concrete number to revisit once Phase 3's real prompt
-exists; (2) barge-in stops speech in ~455ms by log-timestamp granularity, a bit over
-FR-2.4's 300ms target — needs a tighter instrumented measurement later, not just
-state-transition timestamps. Full numbers in `docs/DEV_JOURNAL.md`'s 2026-08-17 Phase 1
-entry.
-**Decisions made this session:** `GEMINI_MODEL` defaults to the `gemini-flash-latest`
-rolling alias, not a pinned version — `gemini-2.5-flash` (the plugin's own compiled-in
-default) is confirmed dead (404 "no longer available to new users") despite still
-appearing in the `/models` listing. `agent/main.py` deliberately omits `agent_name` on
-`@server.rtc_session()` to keep automatic dispatch (FR-1.4) — a non-empty `agent_name`
-silently switches to explicit-dispatch-only.
+**Now working on:** Ready to start Phase 3 (grounding and citations) — the graded
+feature. Corpus is live in Supabase: 51 chunks (resume, `context.md`, 6 curated GitHub
+repos) via `ingestion/ingest.py`, re-runnable and idempotent (`uv run python -m
+ingestion.ingest`). All Phase 2 `BUILD_PLAN.md` exit criteria pass, verified with
+`uv run python -m ingestion.validate`: chunk count in range, no floor/ceiling
+violations, no duplicate hashes, all 5 spot-checks return the correct top chunk, the
+out-of-scope refusal check passes. Retrieval is **hybrid** (dense cosine similarity for
+eligibility/threshold-gating + Postgres full-text keyword ranking for ordering among
+eligible candidates via Reciprocal Rank Fusion) — added mid-phase after a real spot-
+check failure, see `docs/DEV_JOURNAL.md`'s 2026-08-18 validation entry. `match_chunks`
+now takes `query_embedding` **and** `query_text`; Phase 3's `retrieval.py` should call
+it with both from the start.
+**Blocked by:** Nothing functionally. Four things worth attention when they become
+relevant: (1)/(2) the Phase 1 latency (LLM TTFT ~2.5s avg, one 7s spike) and barge-in
+timing (~455ms) numbers are still open, unchanged since Phase 1 — revisit once Phase
+3's real system prompt exists; (3) `RETRIEVAL_THRESHOLD=0.5` is empirically grounded
+against real out-of-scope scores for this corpus, but is explicitly interim — final
+tuning happens in Phase 3 against the full 20-question `TEST_PLAN.md` suite; (4)
+`bge-small-en-v1.5` has a real, demonstrated weakness anchoring on short acronyms/
+numbers inside longer passages (the CGPA spot-check) — hybrid search compensates for
+this specific case, but a differently-phrased factual query could still expose the same
+underlying weakness; worth keeping in mind when writing Phase 3's test questions.
+**Decisions made this session:** GitHub content ingests via plain REST + PAT, not an
+MCP client — walked through the real trade-offs with the owner before choosing; see
+`ARCHITECTURE.md` ADR-002/ADR-003 amendments. GitHub ingestion is curated to 6 repos
+matching what the resume/`context.md` narrative actually references, not all 22
+non-fork repos (would have been 212 chunks of mostly-irrelevant coursework). `corpus/*`
+is gitignored except `README.md` — resume/`context.md` carry personal contact info,
+so source documents are ingested but never pushed to public git history.
+**Decisions made in earlier sessions:** `GEMINI_MODEL` defaults to the
+`gemini-flash-latest` rolling alias, not a pinned version — `gemini-2.5-flash` (the
+plugin's own compiled-in default) is confirmed dead (404 "no longer available to new
+users") despite still appearing in the `/models` listing. `agent/main.py` deliberately
+omits `agent_name` on `@server.rtc_session()` to keep automatic dispatch (FR-1.4) — a
+non-empty `agent_name` silently switches to explicit-dispatch-only.
