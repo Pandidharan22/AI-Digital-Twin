@@ -1278,3 +1278,77 @@ actually matters for FR-3.2.
   correct ranking, not just successful execution.
 - Scanned the diff for secret-shaped strings before staging — none found.
 - Committed as `1d9e3d6`, separate from this journal entry.
+
+---
+
+## 2026-08-18 — Phase 2: Ingest orchestrator — full pipeline run for real, twice
+
+**What happened**
+
+- Filled out `ingestion/ingest.py`: wires all three loaders → `chunker.chunk()` →
+  `embedder.embed_documents()` → `supabase-py`'s `.table("chunks").upsert(rows,
+  on_conflict="content_hash")`, then the idempotency step 4 from
+  `DATA_INGESTION.md` §6 — for every `source` touched this run, delete rows with
+  that source whose `content_hash` wasn't in this run's output, via
+  `.delete().eq("source", source).not_.in_("content_hash", hashes)`. Checked
+  `postgrest`'s actual `SyncFilterRequestBuilder` for the real method names
+  (`not_`, `in_`) before writing the call rather than guessing at supabase-py's
+  filter chaining syntax.
+- **Ran it for real against live Supabase, three separate times, each testing a
+  different property:**
+  1. First run: 51 chunks upserted across 7 sources. Cross-checked against the
+     database directly with `select count(*)` and a per-source breakdown —
+     matched the script's own printed summary exactly, and matched the 51-chunk
+     count already established at the chunker step. One thing worth naming
+     honestly: `Mock-Builder` doesn't appear among the 7 sources — its README is
+     genuinely only 22 words, under the 40-token floor, so it produces zero
+     chunks. Unlike the Technical Skills/Education bug from the chunker step,
+     this isn't a fragmentation artifact to fix — the source content really is
+     that thin. No real content gap results: `context.md`'s "A real failure —
+     the Mockbuilder project" section already covers that story in full, first-
+     person depth.
+  2. Re-ran immediately with no changes: still 51 rows, zero duplicates —
+     idempotent upsert confirmed against real data, not just inferred from the
+     `on_conflict` clause being present in the code.
+  3. Manually inserted a fake row directly into the live table (a bogus
+     `content_hash` not present in any real run's output, borrowing an existing
+     row's embedding just to satisfy the `NOT NULL` column) to create a genuine
+     stale-row scenario, then re-ran ingestion. It reported "Deleted 1 stale
+     rows"; queried the database directly afterward and confirmed the fake row
+     was actually gone and the total was back to exactly 51 — the deletion path
+     was exercised against something real, not just present in the code and
+     assumed to work.
+
+**Why**
+
+Idempotency and stale-content removal are exactly the kind of logic that looks
+obviously correct on the page and is genuinely easy to get backwards (delete too
+much, delete too little, or delete rows from a source that wasn't even part of
+this run) — `CLAUDE.md`'s "run it, don't say it should work" applies with extra
+force here because a *silent* bug in this specific logic (e.g., deleting rows
+from every source instead of just the one being re-ingested) wouldn't show up as
+an error, it would just quietly corrupt the corpus over successive runs. Faking a
+stale row deliberately, rather than waiting for a real content change to test the
+path, made the property checkable on demand instead of hoping it would come up
+naturally.
+
+**Decisions made**
+
+- Stale-row deletion is scoped per-source, computed from the actual set of
+  sources touched in *this* run — a source that wasn't re-ingested this run
+  (e.g., if a loader failed) correctly keeps its existing rows rather than
+  having them deleted for "not appearing" in a run that never touched them.
+- `Mock-Builder` staying at zero chunks is accepted as correct behavior, not
+  patched around — logged here so it reads as a understood outcome if it comes
+  up again, not rediscovered as a mystery.
+
+**Verification**
+
+- Three full real runs against live Supabase (initial, idempotency re-run,
+  fake-stale-row re-run), each cross-checked with direct SQL against the
+  database rather than trusting the script's own printed summary.
+- Scanned the diff for secret-shaped strings before staging — none found (the
+  script reads `DATABASE_URL`/`SUPABASE_URL`/`SUPABASE_SERVICE_KEY` from the
+  environment, never contains them).
+- `git status --short` after staging → only `ingestion/ingest.py`.
+- Committed as `998fc4e`, separate from this journal entry.
