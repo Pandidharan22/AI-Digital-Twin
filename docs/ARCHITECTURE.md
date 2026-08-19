@@ -159,6 +159,14 @@ staleness window is hours, and the refresh is automated.
 
 **Outcome.** *[Fill in: ingestion cadence chosen, refresh runtime.]*
 
+**Amendment (2026-08-18, Phase 2).** This ADR's framing of "MCP for freshness" was
+originally read as literal — GitHub content flowing through an MCP client. In practice,
+the offline ingestion job (`ingestion/loaders/github_loader.py`) calls GitHub's REST API
+directly with a PAT, not through a spawned `github-mcp-server` process. See the ADR-003
+amendment below for the full reasoning; the "offline, not query-time" argument this ADR
+makes is unaffected either way — that's about *when* to fetch, not which client library
+does the fetching.
+
 ---
 
 ### ADR-003 — GitHub via official MCP; LinkedIn via official data export only
@@ -180,6 +188,31 @@ static enough that manual refresh is not a burden.
 
 **Outcome.** *[Fill in.]*
 
+**Amendment (2026-08-18, Phase 2) — GitHub half changed from MCP client to plain REST.**
+Before writing the loader, researched what "GitHub via the official MCP server" actually
+requires end to end: `github-mcp-server` is a separate process (Docker container or
+binary) that itself calls the same GitHub REST/GraphQL API this project would otherwise
+call directly, exposed over MCP's stdio JSON-RPC protocol. Using it means `ingest.py`
+spawning that process as a subprocess and speaking MCP as a client — identical underlying
+data, plus a second process, a new Python dependency (the `mcp` SDK), and a Docker
+requirement that has to be satisfiable wherever ingestion runs, including the GitHub
+Actions cron this project's freshness story depends on (ADR-002) and the Phase 5 "does it
+work cold, on a machine that's never seen this project" test, which `BUILD_PLAN.md` calls
+"not optional."
+
+Walked the owner through the actual mechanics of both paths (not a pre-digested
+recommendation) before asking them to choose. **Decision: plain REST + PAT** (`httpx`
+against `api.github.com`) — identical data, one fewer moving part, no Docker dependency
+to keep alive through deployment. `ingestion/loaders/github_mcp.py` was renamed to
+`github_loader.py` so the filename doesn't claim a protocol the code doesn't use.
+
+This ADR's title and "official MCP" framing are left as originally written rather than
+rewritten, per this project's own convention (see `DEV_JOURNAL.md`'s
+newest-first→oldest-first reordering entry) of amending decisions in place instead of
+erasing the reasoning that led to the original call. The LinkedIn half of this ADR (data
+export only, no scraping) is unaffected — that decision was never about MCP vs. REST, it
+was about not automating a scraped, ToS-violating session at all.
+
 ---
 
 ### ADR-004 — Threshold-gated retrieval as the anti-hallucination mechanism
@@ -198,7 +231,24 @@ makes refusal deterministic where it matters most.
 **Trade-off accepted.** A poorly tuned threshold causes false refusals on legitimate
 questions. Mitigated by tuning against the test set in `TEST_PLAN.md`.
 
-**Outcome.** *[Fill in: final threshold value and how you tuned it.]*
+**Outcome (interim, Phase 2 — 2026-08-18).** `RETRIEVAL_THRESHOLD=0.5`, empirically set
+against real corpus data, not guessed: the original `.env.example` default of 0.35 was
+never actually tested and let a deliberately out-of-scope query ("what's your favorite
+pizza topping?") return 4 results at cosine similarity 0.457. Measuring real out-of-scope
+scores against this specific corpus and embedding model put the noise ceiling around
+0.46, so 0.5 was chosen with a margin above that. Still explicitly subject to further
+tuning in Phase 3 against the full 20-question `TEST_PLAN.md` suite — this is the
+threshold that passed Phase 2's 5-spot-check + 1-refusal validation, not a final number.
+
+Running the real spot-checks also surfaced a second problem this ADR's threshold
+mechanism alone doesn't solve: a chunk can legitimately clear the threshold (real
+semantic similarity, not noise) and still fail to reach the LLM if pure dense-vector
+*ranking* puts it outside the top-k cutoff — which happened for "What's your CGPA?" (see
+ADR-006's outcome for why). The threshold gate's job — deciding what's eligible at all —
+worked correctly in that case; a separate ranking problem, not a gating problem, is what
+hybrid search (added the same day) fixes. Kept as two clearly separated concerns in
+`match_chunks`'s implementation: the threshold still gates eligibility alone, unweakened;
+hybrid ranking only reorders among already-eligible candidates.
 
 ---
 
@@ -238,7 +288,23 @@ key from the critical path.
 **Trade-off accepted.** Slightly lower embedding quality than large hosted models;
 immaterial for a corpus of this size. Adds ~100MB to the worker image.
 
-**Outcome.** *[Fill in.]*
+**Outcome (Phase 2 — 2026-08-18).** The "immaterial for a corpus of this size" trade-off
+needs a real caveat, not a rubber stamp: `bge-small-en-v1.5` (33M params) measurably
+struggled with one real spot-check. "What's your CGPA?" should retrieve the resume's
+Education chunk (which literally contains "CGPA: 7.6"), but that chunk's raw cosine
+similarity (0.530) ranked *below* four unrelated GitHub README chunks (0.543–0.557) —
+the model is weak at anchoring on a specific short acronym buried inside a longer
+passage, compressing everything into one fixed vector loses that kind of precise, local
+signal more than it loses broad topical meaning. Not a correctness bug in the pipeline;
+a real, demonstrated limitation of the model choice at this size.
+
+Did not swap to a larger BGE variant (`bge-base`/`bge-large`) to fix it — instead added
+hybrid search (dense + Postgres full-text, ADR-004's outcome note) as a targeted fix for
+exactly this failure class, since it required no new model download and added no query-
+time latency, versus a larger embedding model which would still be the same fundamental
+architecture (one vector per chunk) and wasn't guaranteed to fix acronym-anchoring
+specifically. `bge-small` stays the embedding model; hybrid search compensates for its
+known weak spot rather than the project trading up to a heavier model to paper over it.
 
 ---
 
@@ -262,7 +328,10 @@ voice-twin/
 │       └── system_prompt.md   # editable, not buried in code
 ├── ingestion/
 │   ├── ingest.py              # orchestrator
-│   ├── loaders/               # pdf, markdown, github_mcp
+│   ├── schema.sql             # chunks table + hybrid match_chunks() function
+│   ├── validate.py            # post-ingest structural + spot-check validation
+│   ├── types.py                # shared RawSection/ChunkRecord shapes
+│   ├── loaders/               # pdf, markdown, github (REST -- see ADR-003 amendment)
 │   ├── chunker.py
 │   └── embedder.py
 ├── api/
@@ -276,13 +345,18 @@ voice-twin/
 
 ## 6. Data model
 
-Single table, `chunks`:
+Single table, `chunks` (as actually implemented in `ingestion/schema.sql`, Phase 2 —
+adjusted from this doc's original sketch in two places: `id` is `bigserial`, not
+`uuid`, since nothing needs globally-unique IDs across systems; the citable text
+column is named `text`, not `content`, matching `DATA_INGESTION.md`'s own metadata
+schema table in Sec4):
 
 | Column | Type | Notes |
 |---|---|---|
-| `id` | uuid | PK |
-| `content` | text | The chunk text — this is what gets cited |
+| `id` | bigint | PK |
+| `text` | text | The chunk text — this is what gets cited |
 | `embedding` | vector(384) | Dimension must match your model |
+| `text_search` | tsvector | Generated column, auto-populated from `text`; powers the keyword half of hybrid search — see ADR-004 amendment |
 | `source` | text | e.g. `resume.pdf`, `github:voice-twin` |
 | `source_type` | text | `resume` \| `project` \| `writing` \| `profile` |
 | `section` | text | Human-readable, shown on the citation card |
@@ -290,7 +364,7 @@ Single table, `chunks`:
 | `content_hash` | text | For idempotent upserts |
 | `ingested_at` | timestamptz | Freshness display |
 
-Index: IVFFlat or HNSW on `embedding` for cosine distance.
+Indexes: HNSW on `embedding` (cosine distance) and GIN on `text_search` (full-text).
 
 ---
 
