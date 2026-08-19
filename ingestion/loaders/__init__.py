@@ -1,1 +1,1 @@
-"""Document loaders for the ingestion pipeline: PDF, local markdown, and GitHub MCP."""
+"""Document loaders for the ingestion pipeline: PDF, local markdown, and GitHub REST."""
