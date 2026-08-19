@@ -1130,3 +1130,92 @@ most about while keeping lower-value ones that happen to have a description.
 - `git status --short` after staging → the rename (delete + new file) and the one
   `__init__.py` docstring edit, nothing else.
 - Committed as `8a0ceff`, separate from this journal entry.
+
+---
+
+## 2026-08-18 — Phase 2: Chunker — and a real content-loss bug caught by running it
+
+**What happened**
+
+- Built `ingestion/chunker.py`: takes every loader's `RawSection` output and
+  finalizes it into `ChunkRecord`s. Uses `tiktoken`'s `cl100k_base` encoding as a
+  consistent size yardstick (not claimed to match Gemini's real tokenizer, just
+  needs internal consistency), discards anything under the 40-token floor,
+  and — for anything over the 500-token ceiling — splits on paragraph breaks
+  first, falling back to sentence boundaries if a section has no paragraph
+  structure (true for GitHub/markdown content, which keeps its real `\n\n`
+  breaks; not true for PDF-derived chunks, which the loader already flattens to
+  one line, but none of those approach the ceiling anyway). A split-off remainder
+  that itself lands under the floor gets merged back into the previous piece
+  rather than silently dropped. Builds the `[Source: X | Section: Y]` prefixed
+  `embed_text` for the embedder while keeping `text` clean for citation display,
+  and computes `content_hash` from source+section+text for the idempotent upsert.
+  Added `ChunkRecord` to `types.py` alongside `RawSection`.
+- **Ran the full three-loader → chunker pipeline against real data** before
+  considering this done — not each piece in isolation. First result: 58 raw
+  sections in, only 50 chunk records out. Printed every resume chunk with its
+  token count to see exactly what the floor was discarding, rather than assuming
+  the 8-chunk drop was all correctly-filtered noise.
+- **It wasn't.** Four of five Technical Skills categories and both Education
+  entries got silently discarded — each individually landed under the 40-token
+  floor (a bare line like `"Frontend: React.js, Three.js, Tailwind CSS, Framer
+  Motion, Streamlit"` is genuinely short, but it's real, legitimate, factual
+  content, not noise). That's a real retrieval-quality bug: a visitor asking "do
+  you know MongoDB?" or "what's your CGPA?" would have hit `no_match` and gotten
+  a refusal, even though the answer was sitting right there in the source PDF —
+  exactly the failure mode `DATA_INGESTION.md`'s validation step (§9) exists to
+  catch before it reaches a voice interface.
+- Traced the actual cause: not a chunker bug, a loader-scoping bug from the
+  earlier PDF loader step. `DATA_INGESTION.md`'s own chunk-boundary table
+  describes the resume's Technical Skills unit as "one skills block" —
+  *singular* — but the PDF loader had split it into five, one per category,
+  which was already off-spec before the floor ever touched it. Fixed at the
+  source rather than papering over it in the chunker: `_split_technical_skills`
+  now returns one combined chunk for the whole section (151 tokens, comfortably
+  inside DATA_INGESTION's 100–300 target for a resume chunk), and
+  `_split_education` now combines both entries into one 56-token chunk for the
+  same reason — the alternative of loosening the chunker's own floor to
+  accommodate under-sized pieces would have let real noise back in everywhere
+  else just to rescue these two sections.
+- Also dropped the `Contact Info` chunk entirely (rather than fixing it to clear
+  the floor) — on reflection, phone/email isn't content a public-facing voice
+  bot should be citing as a "source" to answer a question, independent of the
+  token-count issue; it was borderline even before this bug surfaced.
+- Re-ran the full pipeline after the fix: **51 chunks** (9 resume + 8 context.md
+  + 34 GitHub), zero under 40 tokens, zero over 500, zero duplicate
+  `content_hash` values — comfortably inside `BUILD_PLAN.md`'s 40–150 target.
+
+**Why**
+
+This is the clearest example so far in Phase 2 of why `CLAUDE.md`'s "run it, don't
+say it should work" applies at the pipeline level, not just per-file: each loader
+looked correct in isolation (`pdf_loader.py` was reviewed and committed on its own
+merits, its 15 chunks all read cleanly), and the bug only existed at the seam
+between two components that were each individually reasonable — a loader choosing
+finer granularity than the spec called for, and a chunker correctly enforcing a
+floor neither piece was wrong about in isolation. Only running the whole chain
+against real data and reading actual counts surfaced it.
+
+**Decisions made**
+
+- Chunk boundaries for Technical Skills and Education follow "don't lose real
+  content" over "match the spec's literal per-category/per-entry granularity" —
+  the spec's own resume-skills row already said "one skills block" singular, so
+  this is a correction back toward the spec for skills, and a deliberate,
+  documented deviation for education (spec says "one education entry," but two
+  short entries getting merged into one citable chunk was judged better than
+  either losing them or lowering the floor globally).
+- `content_hash` incorporates source + section + text, not text alone, so the
+  same phrase reused in two different sections still hashes uniquely.
+
+**Verification**
+
+- Ran the full loaders → chunker pipeline against real corpus content (not a
+  fixture) twice: once that surfaced the bug (50 chunks, resume chunks
+  individually inspected and found wrongly dropped), once after the fix (51
+  chunks, zero floor/ceiling violations, zero duplicate hashes).
+- Printed every resume chunk's section and token count after the fix to confirm
+  all nine are real, meaningful, and within DATA_INGESTION's target range.
+- Scanned the diff for secret-shaped strings before staging — none found.
+- `git status --short` after staging → the three intended files.
+- Committed as `12bb2a1`, separate from this journal entry.
