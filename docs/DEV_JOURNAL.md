@@ -720,3 +720,123 @@ is live.
   matches.
 - Committed the gitignore/README privacy fix (`61b6ecb`) as its own work commit,
   separate from this journal entry, per the log-then-commit protocol.
+
+---
+
+## 2026-08-18 — Phase 2: Planning the pipeline; GitHub REST vs. MCP client decision
+
+**What happened**
+
+- Before writing any ingestion code, went through plan mode to design the full
+  loaders → chunker → embedder → Supabase pipeline, per `CLAUDE.md`'s "plan before
+  implementing anything non-trivial."
+- Researched, rather than assumed, two open implementation questions live during
+  planning: (1) how Supabase's pgvector similarity search is actually wired up from
+  Python — confirmed the standard pattern is a Postgres function (`match_documents`/
+  `match_chunks` style) called via `supabase-py`'s `.rpc()`, since PostgREST can't
+  execute the `<=>` vector-distance operator directly; (2) how the official GitHub MCP
+  server actually works end to end, since `DATA_INGESTION.md` names it specifically
+  rather than "call the GitHub API."
+- **The GitHub MCP finding, explained to the owner before deciding:** the official
+  server (`github/github-mcp-server`) isn't a different data source — it's a separate
+  process (Docker container or binary) that itself calls the same GitHub REST/GraphQL
+  API, and exposes that as MCP tools over a stdio JSON-RPC protocol. Using it from
+  `ingest.py` means spawning that process as a subprocess and speaking MCP as a
+  client (Python `mcp` SDK), rather than one HTTP call. Same underlying data either
+  way; the only thing MCP adds here is a second process, a new dependency, and a
+  Docker requirement that has to be satisfied wherever ingestion runs — including the
+  GitHub Actions cron in Phase 5.
+- Walked the owner through the actual mechanics of both paths (not just a summary
+  trade-off) before asking them to choose, since "which is simpler" isn't answerable
+  without seeing what each one actually requires. **Decision: plain REST API** (PAT +
+  `httpx`, direct to `api.github.com`) — identical data, one fewer moving part, no
+  Docker dependency to keep alive through deployment and the ingestion cron.
+- This is a real deviation from `ARCHITECTURE.md` ADR-002/ADR-003's literal "MCP
+  client" language, so the plan calls for **amending both ADRs with a note**, not
+  quietly implementing something different from what the docs claim — same principle
+  the journal itself already follows (annotate reversed decisions, don't erase them).
+  `ingestion/loaders/github_mcp.py` will be renamed to `github_loader.py` so the
+  filename stops implying a protocol the code doesn't use.
+- Wrote the approved plan to
+  `C:\Users\pandi\.claude\plans\polished-dazzling-sunrise.md`: Supabase schema
+  (`chunks` table + `match_chunks` RPC, applied via direct `psycopg` connection since
+  DDL can't go through PostgREST), three loaders (PDF tuned to this resume's actual
+  section structure, markdown split on `##`, GitHub via REST), a chunker enforcing the
+  size floor/ceiling and contextual prefixing, a local `bge-small-en-v1.5` embedder,
+  an idempotent upsert orchestrator, and a validation script with 5 spot-check queries
+  written against the real corpus content that now exists.
+- Created 11 tracked tasks (`TaskCreate`) mirroring the plan's build order, to work
+  through one at a time with the log-then-commit protocol applied per meaningful step
+  rather than one large end-of-phase commit.
+
+**Why**
+
+Planning mattered here specifically because the GitHub ingestion question had a real
+architectural fork with asymmetric stakes — not "which is cleaner" but "one of these
+introduces an infrastructure dependency that could quietly break the Phase 5 cold-start
+test." `BUILD_PLAN.md`'s own Phase 5 section calls the cold-start test "not optional,"
+which made the Docker-availability question concrete rather than theoretical. Explaining
+the mechanics before asking for a decision, instead of presenting a pre-digested
+recommendation, matched what the owner actually asked for when the first attempt at
+this question got rejected mid-plan.
+
+**Decisions made**
+
+- GitHub content enters via plain REST + PAT, permanently — not deferred, not "MCP
+  later." Documented as an amendment to ADR-002/ADR-003, not a silent contradiction of
+  them.
+- `ingestion/loaders/github_mcp.py` → `ingestion/loaders/github_loader.py`.
+- Supabase schema changes go through a direct `psycopg`/`DATABASE_URL` connection,
+  never through `supabase-py`'s table/rpc client, since the latter can't run DDL.
+- Chunk size heuristics use `tiktoken`'s `cl100k_base` encoding as a consistent
+  yardstick — explicitly not claimed to match Gemini's real tokenizer, just needs
+  internal consistency for the floor/ceiling rule.
+
+**Verification**
+
+- N/A for this entry — planning only, no code changed. Verification lands per-step as
+  each task in the plan is implemented and committed.
+
+---
+
+## 2026-08-18 — Phase 2: Ingestion dependencies
+
+**What happened**
+
+- `uv add "psycopg[binary]" pypdf httpx tiktoken sentence-transformers supabase` — the
+  six packages the approved plan calls for. Resolved 147 packages total; the heavy
+  ones are transitive, not direct — `torch` (116MB), `scipy`, `transformers`, and
+  `scikit-learn` all come in underneath `sentence-transformers`, which needs a real
+  PyTorch backend to run the `bge-small-en-v1.5` model locally.
+- `httpx` didn't need adding explicitly in the end — `uv add` resolved it in as a
+  transitive dependency of `supabase`'s `postgrest`/`storage3` clients already, at
+  `0.28.1`, which satisfies what the GitHub loader needs. Listed it directly in
+  `pyproject.toml` anyway (`httpx>=0.28.1`) rather than relying on it staying
+  transitively present — the GitHub loader's own dependency on it should be explicit
+  in the manifest, not implicit through an unrelated package's requirements.
+- Verified all six land at usable versions via `uv pip list`, rather than trusting the
+  install log alone: `psycopg==3.3.4`, `pypdf==6.16.1`, `httpx==0.28.1`,
+  `tiktoken==0.14.0`, `sentence-transformers==6.0.0`, `supabase==2.31.0`.
+
+**Why**
+
+Same "verify the install, don't trust the log" habit as Phase 0's LiveKit dependency
+step — `uv add`'s own summary output only shows what changed in the resolution, not a
+clean confirmation that each named package is actually importable at the version
+expected.
+
+**Decisions made**
+
+- None beyond the dependency versions themselves, which are pinned by `uv.lock` as of
+  this commit.
+
+**Verification**
+
+- `uv pip list | grep -iE` for all six target packages → all present, versions
+  recorded above.
+- `git diff pyproject.toml` reviewed line-by-line before staging — six additive
+  dependency lines, nothing else touched.
+- Scanned the diff for secret-shaped strings before staging — `uv.lock` only ever
+  contains package hashes, not credentials; confirmed none found.
+- `git status --short` after staging → only `pyproject.toml` and `uv.lock`.
+- Committed as `ee315e6`, separate from this journal entry.
