@@ -905,3 +905,90 @@ script is what actually closes that gap.
   it).
 - `git status --short` after staging → only the two intended files.
 - Committed as `7bae34c`, separate from this journal entry.
+
+---
+
+## 2026-08-18 — Phase 2: PDF loader — resume, tuned to its real extracted structure
+
+**What happened**
+
+- Before writing any splitting logic, ran `pypdf`'s actual `extract_text()` against
+  the real resume and printed the raw output, rather than assuming a PDF text
+  extractor preserves the visual layout. It doesn't, in two specific ways: (1) some
+  spaces around `:`/`&`/`/` characters vanish — `"AI/ML&GenAI:Python, ..."` instead of
+  `"AI / ML & GenAI: Python, ..."` — apparently because pypdf's whitespace-insertion
+  heuristic depends on inter-glyph gap size, and a few gaps in this PDF's layout fall
+  under whatever threshold it uses; (2) a project's title and its right-aligned
+  category tag ("Agentic AI / Open Source") share one visual row in the PDF, so they
+  extract as a single run-together line since pypdf reads left-to-right per line, not
+  per visual column.
+- Built `ingestion/loaders/pdf_loader.py` around the resume's *actual* six section
+  headers (confirmed as literal standalone lines in the extracted text: Objective,
+  Technical Skills, Projects, Experience / Freelance, Core Engineering Strengths,
+  Education) rather than guessing at a generic resume schema. Technical Skills splits
+  per category — including correctly handling that the first category's item list
+  wraps across two PDF lines while the other four don't, by treating any line
+  containing `:` as a new category rather than assuming one line per category.
+  Projects splits into one chunk per entry by matching each of the four known
+  title-prefixes at the start of a line (the run-together tag text after the prefix is
+  discarded and replaced with a known-clean category tag, rather than trying to
+  generically parse it back apart). Education pairs each bullet line with its
+  following description line.
+- Ran the loader against the real file and printed every resulting chunk — this
+  surfaced two chunks that hadn't just lost a few spaces but had lost *all* of them:
+  `"End-to-endMLsystemforloandefaultpredictionwithFastAPIbackend..."` (the loan project
+  description) and `"Engineeredaproduction-gradeself-hostedhomelabcombining..."` (the
+  homelab project description) — both extracted as one unbroken run with zero
+  whitespace at all, a more severe version of the same pypdf quirk. Fixed both with
+  targeted, verified string replacements rather than a generic regex, for the same
+  reason the rest of the cleanup is targeted: a blanket "insert a space at every
+  lowercase→uppercase boundary" rule would just as happily mangle correct terms
+  elsewhere in the document (`GitHub` → `Git Hub`, `NumPy` → `Num Py`), trading one
+  category of error for a different one.
+- One thing that looked like a bug and wasn't: printing a chunk's `section` field
+  showed a `�` character in place of the em-dash used in headings like `"Projects —
+  Project Nexus"`. Checked with `ord()` directly on the actual string content rather
+  than trusting what printed — confirmed the real character is U+2014 (em dash),
+  correctly stored; the `�` is this Windows terminal's codepage failing to render it,
+  not data corruption. Worth noting because it's exactly the kind of thing that's easy
+  to "fix" incorrectly by mangling correct data to satisfy a terminal that's actually
+  the thing at fault.
+- Result: 15 clean chunks from one resume (1 contact block, 1 objective, 5 technical-
+  skill categories, 4 projects, 1 experience entry, 1 core-strengths block, 2 education
+  entries), all read as normal prose when printed.
+- Added `ingestion/types.py` with a shared `RawSection` `NamedTuple` — the loader
+  output shape (`source`, `source_type`, `section`, `text`, optional `source_url`) —
+  so the markdown and GitHub loaders (next) and the chunker all agree on one contract
+  instead of three ad hoc tuples.
+
+**Why**
+
+This is the same "verify, don't guess" discipline as `CLAUDE.md` rule #2, applied to a
+library's actual output instead of an SDK's actual API — assuming a PDF extractor
+preserves spacing would have shipped a loader that silently produced garbled citation
+text on two of four projects, the kind of bug that's invisible until someone actually
+reads a card in the UI. Printing every real chunk before moving on, rather than trusting
+that the section-splitting logic "should" work, is what caught it.
+
+**Decisions made**
+
+- The PDF loader is explicitly scoped to this one resume's real structure, documented
+  as such in its own module docstring — not a general-purpose resume parser. A
+  differently formatted resume would need the section/project tables in this file
+  adjusted.
+- Text cleanup uses a curated list of verified exact-string replacements plus a small
+  number of safe generic regexes (space-after-colon, space-after-comma), not a broad
+  heuristic regex — chosen specifically to avoid trading known garbling for new,
+  different garbling of already-correct terms.
+
+**Verification**
+
+- Ran `pdf_loader.load()` against the real `corpus/AI Engineer Resume.pdf` and printed
+  every one of the 15 resulting chunks in full — read each one for readability, not
+  just checked chunk count.
+- Checked the em-dash question with `ord()` against the real string content before
+  concluding it was a display artifact rather than a data bug.
+- Scanned the diff for secret-shaped strings before staging — none found (this file
+  only ever touches resume prose, no credentials).
+- `git status --short` after staging → only the two intended new/changed files.
+- Committed as `160db26`, separate from this journal entry.
