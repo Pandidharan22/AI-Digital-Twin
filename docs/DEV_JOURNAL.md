@@ -840,3 +840,68 @@ expected.
   contains package hashes, not credentials; confirmed none found.
 - `git status --short` after staging → only `pyproject.toml` and `uv.lock`.
 - Committed as `ee315e6`, separate from this journal entry.
+
+---
+
+## 2026-08-18 — Phase 2: Supabase schema — chunks table and match_chunks RPC
+
+**What happened**
+
+- Wrote `ingestion/schema.sql`: enables the `vector` extension, creates the `chunks`
+  table with all the fields `DATA_INGESTION.md` §4 requires (`source`, `source_type`,
+  `section`, `text`, `source_url`, `content_hash` with a unique constraint,
+  `embedding vector(384)`, `ingested_at`), an HNSW index on the embedding column for
+  fast approximate cosine search, and a `match_chunks` SQL function.
+- The function exists because PostgREST — the REST layer `supabase-py`'s table/rpc
+  client actually talks to — has no way to evaluate pgvector's `<=>` distance operator
+  directly through a normal table query. Wrapping the similarity search in a Postgres
+  function and calling it via `.rpc("match_chunks", {...})` is the documented pattern
+  (confirmed against Supabase's own docs during planning, not assumed). The function
+  takes a query embedding, a similarity threshold, and a result count, and returns
+  chunks scoring above threshold ordered by distance — this *is* FR-3.3's threshold
+  gate, implemented at the database layer rather than filtered in Python after the
+  fact, so a below-threshold chunk never even leaves Postgres.
+- Added `setup_db()` to `ingestion/ingest.py` — reads `schema.sql` and executes it
+  over a direct `psycopg` connection using `DATABASE_URL`, since DDL (extensions,
+  tables, functions) has to go through a real Postgres connection, not the REST API.
+  Every statement in the file is `if not exists` / `or replace`, so re-running is
+  always safe.
+- **Ran it for real against the live Supabase project**, twice — not described, not
+  assumed to work. First run applied the schema; then queried
+  `pg_extension`/`information_schema.columns`/`pg_proc`/`pg_indexes` directly to
+  confirm the extension, all nine expected columns, the function, and both indexes
+  (primary key, unique `content_hash`, and the HNSW index) actually exist in the
+  database — not just that the script exited without error. Second run confirmed
+  idempotency: no errors, nothing duplicated, matching FR-6.4's requirement one layer
+  down from where it usually gets tested (schema-level, not row-level, but the same
+  principle).
+
+**Why**
+
+`CLAUDE.md`'s "run things, don't say this should work" rule applies as much to
+database migrations as to application code — a `CREATE TABLE IF NOT EXISTS` that
+silently no-ops because of a typo in a column name would still print success and
+would still be wrong. Querying Postgres's own system catalogs after running the
+script is what actually closes that gap.
+
+**Decisions made**
+
+- Schema application lives in `ingest.py` as `setup_db()`, callable both from the
+  module's own `__main__` block (for standalone runs, useful during this kind of
+  verification) and, later, from the full orchestrator before loaders run.
+- No separate migrations tool (Supabase CLI, Alembic) introduced for a single
+  idempotent schema file — proportionate to the project's size; would reconsider if
+  the schema needed versioned migrations later.
+
+**Verification**
+
+- `uv run python -m ingestion.ingest` → `Schema applied.`, run twice, both clean.
+- Direct psycopg queries against `pg_extension`, `information_schema.columns`,
+  `pg_proc`, and `pg_indexes` after the first run — all expected objects present and
+  correctly shaped, checked against the live database rather than trusted from the
+  script's own exit status.
+- Scanned `ingest.py` and `schema.sql` diffs for secret-shaped strings before staging
+  — none found (the file reads `DATABASE_URL` from the environment, never contains
+  it).
+- `git status --short` after staging → only the two intended files.
+- Committed as `7bae34c`, separate from this journal entry.
