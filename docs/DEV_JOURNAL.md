@@ -1462,3 +1462,67 @@ project can't currently spare.
   hashes) re-confirmed passing after the schema change.
 - Scanned the diff for secret-shaped strings before staging — none found.
 - Committed as `750b2e8`.
+
+---
+
+## 2026-08-18 — Phase 2: Reconciling ARCHITECTURE.md with what actually got built
+
+**What happened**
+
+- Amended `ADR-002` and `ADR-003` with dated notes explaining the GitHub REST-vs-MCP
+  decision from earlier this phase, cross-referenced between the two ADRs rather than
+  duplicated. Deliberately left the original ADR text and "official MCP" framing
+  untouched — same convention this journal already follows (see the earlier
+  newest-first→oldest-first reordering entry): a decision that got revisited is
+  recorded as an amendment on top of the original reasoning, not a silent rewrite that
+  erases why the first call was made.
+- Filled in `ADR-004`'s Outcome section with the real threshold value (`0.5`) and how
+  it was actually derived (measured real out-of-scope similarity scores against this
+  corpus, not guessed), plus an explicit note distinguishing what the threshold gate is
+  actually responsible for (eligibility) from what hybrid search fixes (ranking) — the
+  two validation-step bugs earlier today were different failure classes, and conflating
+  them in the writeup would misrepresent which mechanism fixed which problem.
+- Filled in `ADR-006`'s Outcome section with the real `bge-small` limitation the CGPA
+  spot-check surfaced, and explained why the fix was hybrid search rather than a bigger
+  embedding model — the ADR's original "immaterial for a corpus of this size" trade-off
+  claim needed a real caveat attached now that there's a concrete counter-example, not
+  left standing as an untested assumption.
+- Corrected `ARCHITECTURE.md` Sec5's repository layout and Sec6's data model table to
+  match the schema actually implemented rather than the original sketch: `id` is
+  `bigserial`, not `uuid` (nothing needs cross-system-unique IDs here); the citable text
+  column is named `text`, matching `DATA_INGESTION.md`'s own metadata table, not
+  `content` as this doc originally sketched; added the `text_search` column and its GIN
+  index; updated `ingestion/`'s file listing to include `schema.sql`, `validate.py`,
+  and `types.py`, and fixed the stale `github_mcp` filename reference.
+
+**Why**
+
+An architecture document that describes a system different from the one actually
+running stops being useful the first time someone — the owner during interview prep,
+or a fresh Claude Code session with no memory of this conversation — reads it and
+builds a mental model that doesn't match reality. `CLAUDE.md`'s whole reason for
+existing is fast, accurate re-orientation; a stale ADR or a data model table with the
+wrong column names actively works against that. Doing this reconciliation now, at the
+end of Phase 2 rather than deferred to the Phase 6 writeup pass, keeps the gap from
+compounding across three more phases of code that would otherwise all cite an
+inaccurate schema.
+
+**Decisions made**
+
+- ADR outcomes get filled in as real findings land, not batched for Phase 6 — Phase
+  6's "fill in all ADR Outcome fields with real numbers" instruction in `BUILD_PLAN.md`
+  is about final review and polish, not about this being the first time numbers get
+  written down.
+- Documentation amendments are their own commit, separate from the code change that
+  motivated them — same log-then-commit discipline applied to docs-about-code as to
+  the code itself.
+
+**Verification**
+
+- Re-read the full amended ADR-002 through ADR-006 sections top to bottom to confirm
+  the amendments read coherently alongside the original text, not just individually
+  correct in isolation.
+- Cross-checked the corrected data model table against the real `ingestion/schema.sql`
+  column-by-column.
+- Scanned the diff for secret-shaped strings before staging — none found.
+- Committed as `c0fe898`, separate from this journal entry.
