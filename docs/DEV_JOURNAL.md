@@ -1219,3 +1219,62 @@ against real data and reading actual counts surfaced it.
 - Scanned the diff for secret-shaped strings before staging — none found.
 - `git status --short` after staging → the three intended files.
 - Committed as `12bb2a1`, separate from this journal entry.
+
+---
+
+## 2026-08-18 — Phase 2: Embedder — verified query prefix, real similarity smoke test
+
+**What happened**
+
+- Before writing `embed_query()`, fetched the actual Hugging Face model card for
+  `BAAI/bge-small-en-v1.5` rather than recalling the instruction string from
+  memory — `DATA_INGESTION.md` §5 requires it but doesn't quote it verbatim.
+  Confirmed the exact recommended string: `"Represent this sentence for
+  searching relevant passages:"`, applies to **queries only**, never to stored
+  documents, and is explicitly optional in v1.5 (a marginal gain, not a
+  correctness requirement — the model card notes v1.5 improved retrieval without
+  it). Documented this in the module docstring with the verification source
+  named, same as every other "checked the real thing" step this phase.
+- Built `ingestion/embedder.py`: `embed_documents()` batch-encodes chunk
+  `embed_text` for storage with no instruction prefix; `embed_query()` prepends
+  the verified instruction to a query string before encoding. Both request
+  `normalize_embeddings=True` per the model's own usage example, and the model
+  itself loads once via `lru_cache` rather than reloading per call.
+- **Ran a real smoke test** rather than trusting the wiring looked right: embedded
+  three short passages — one about the RAG project, one deliberately irrelevant
+  ("my favorite pizza topping is pepperoni"), one about JobHunt AI — then embedded
+  the query "What are you working on right now?" and computed real cosine
+  similarities. The JobHunt AI passage scored highest (0.629 vs. 0.488 and
+  0.406), correctly separating a genuinely on-topic passage from an adjacent one
+  and a deliberately unrelated one using real vectors, not assumed correct
+  because the code ran without error.
+
+**Why**
+
+Checking the model card directly matters for the same reason it's mattered all
+phase: a plausible-sounding instruction string recalled from general BGE
+familiarity could easily be off by a word or punctuation mark from what this
+specific model version actually expects, and a subtly wrong instruction
+wouldn't error — it would just quietly under-perform, which is much harder to
+notice than a crash. Running the actual similarity comparison (not just checking
+that embeddings came back at the right dimension) is what turns "the embedder
+runs" into "the embedder retrieves the right thing," which is the property that
+actually matters for FR-3.2.
+
+**Decisions made**
+
+- Query instruction prefixing is applied unconditionally at query time, kept as
+  a separate `embed_query()` function from `embed_documents()` so the
+  query/document asymmetry can never accidentally leak the instruction into
+  stored embeddings.
+- Model loaded lazily via `lru_cache(maxsize=1)` rather than at import time, so
+  importing `embedder.py` (e.g., from a future test) doesn't force a model load.
+
+**Verification**
+
+- Real Hugging Face model card fetched and quoted directly, not recalled.
+- Ran `embed_documents()`/`embed_query()` against real text, confirmed 384-dim
+  output, and computed real cosine similarities across three passages —
+  correct ranking, not just successful execution.
+- Scanned the diff for secret-shaped strings before staging — none found.
+- Committed as `1d9e3d6`, separate from this journal entry.
