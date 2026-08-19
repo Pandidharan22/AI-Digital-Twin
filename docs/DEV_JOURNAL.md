@@ -723,7 +723,7 @@ is live.
 
 ---
 
-## 2026-08-18 — Phase 2: Planning the pipeline; GitHub REST vs. MCP client decision
+## 2026-08-19 — Phase 2: Planning the pipeline; GitHub REST vs. MCP client decision
 
 **What happened**
 
@@ -799,7 +799,7 @@ this question got rejected mid-plan.
 
 ---
 
-## 2026-08-18 — Phase 2: Ingestion dependencies
+## 2026-08-19 — Phase 2: Ingestion dependencies
 
 **What happened**
 
@@ -843,7 +843,7 @@ expected.
 
 ---
 
-## 2026-08-18 — Phase 2: Supabase schema — chunks table and match_chunks RPC
+## 2026-08-19 — Phase 2: Supabase schema — chunks table and match_chunks RPC
 
 **What happened**
 
@@ -908,7 +908,7 @@ script is what actually closes that gap.
 
 ---
 
-## 2026-08-18 — Phase 2: PDF loader — resume, tuned to its real extracted structure
+## 2026-08-19 — Phase 2: PDF loader — resume, tuned to its real extracted structure
 
 **What happened**
 
@@ -995,7 +995,7 @@ that the section-splitting logic "should" work, is what caught it.
 
 ---
 
-## 2026-08-18 — Phase 2: Markdown loader for context.md
+## 2026-08-19 — Phase 2: Markdown loader for context.md
 
 **What happened**
 
@@ -1042,7 +1042,7 @@ threshold can't distinguish from a real answer.
 
 ---
 
-## 2026-08-18 — Phase 2: GitHub loader (REST) — and a real curation call
+## 2026-08-19 — Phase 2: GitHub loader (REST) — and a real curation call
 
 **What happened**
 
@@ -1133,7 +1133,7 @@ most about while keeping lower-value ones that happen to have a description.
 
 ---
 
-## 2026-08-18 — Phase 2: Chunker — and a real content-loss bug caught by running it
+## 2026-08-19 — Phase 2: Chunker — and a real content-loss bug caught by running it
 
 **What happened**
 
@@ -1222,7 +1222,7 @@ against real data and reading actual counts surfaced it.
 
 ---
 
-## 2026-08-18 — Phase 2: Embedder — verified query prefix, real similarity smoke test
+## 2026-08-19 — Phase 2: Embedder — verified query prefix, real similarity smoke test
 
 **What happened**
 
@@ -1281,7 +1281,7 @@ actually matters for FR-3.2.
 
 ---
 
-## 2026-08-18 — Phase 2: Ingest orchestrator — full pipeline run for real, twice
+## 2026-08-19 — Phase 2: Ingest orchestrator — full pipeline run for real, twice
 
 **What happened**
 
@@ -1355,7 +1355,7 @@ naturally.
 
 ---
 
-## 2026-08-18 — Phase 2: Validation surfaces a real retrieval bug — hybrid search added
+## 2026-08-19 — Phase 2: Validation surfaces a real retrieval bug — hybrid search added
 
 **What happened**
 
@@ -1465,7 +1465,7 @@ project can't currently spare.
 
 ---
 
-## 2026-08-18 — Phase 2: Reconciling ARCHITECTURE.md with what actually got built
+## 2026-08-19 — Phase 2: Reconciling ARCHITECTURE.md with what actually got built
 
 **What happened**
 
@@ -1529,7 +1529,7 @@ inaccurate schema.
 
 ---
 
-## 2026-08-18 — Phase 2: Marked complete in CLAUDE.md status
+## 2026-08-19 — Phase 2: Marked complete in CLAUDE.md status
 
 **What happened**
 
