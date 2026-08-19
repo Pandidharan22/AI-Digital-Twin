@@ -1352,3 +1352,113 @@ naturally.
   environment, never contains them).
 - `git status --short` after staging → only `ingestion/ingest.py`.
 - Committed as `998fc4e`, separate from this journal entry.
+
+---
+
+## 2026-08-18 — Phase 2: Validation surfaces a real retrieval bug — hybrid search added
+
+**What happened**
+
+- Built `ingestion/validate.py`: structural assertions (chunk count in the 40–150
+  range, no floor/ceiling violations, no null `source`/`section`, correct 384-dim
+  embeddings, no duplicate `content_hash`) plus the 5 spot-check queries from
+  `DATA_INGESTION.md` §9, written against the real corpus content rather than
+  generic placeholders — e.g. "What was hard about your RAG project?" targets the
+  Self-Reflective RAG hard-problem section specifically — plus the deliberately
+  out-of-scope "What's your favorite pizza topping?" query that's supposed to
+  hit `no_match`.
+- **First real run surfaced a genuine bug, not a test artifact.** "What's your
+  CGPA?" never returned the Education chunk (the one that literally says "CGPA:
+  7.6") in the top 4 — it scored 0.530, which cleared the similarity threshold
+  fine, but four unrelated GitHub README chunks happened to score marginally
+  higher (0.543–0.557) on pure dense-vector similarity, pushing it out of the
+  top-k cutoff. Separately, the out-of-scope pizza query returned 4 results at
+  the untested `RETRIEVAL_THRESHOLD=0.35` default that had been sitting in
+  `.env` since Phase 0 — real out-of-scope similarity scores against this corpus
+  top out around 0.457, well above 0.35.
+- Explained both findings to the owner rather than silently patching them — the
+  CGPA case specifically needed unpacking, since "why does a GitHub repo outrank
+  the actual answer" isn't obvious without understanding that dense embeddings
+  compress a whole passage into one vector and are structurally weak at
+  anchoring on a specific short acronym buried inside it, versus README prose
+  that a small 33M-parameter model can extract more (coincidentally similar-
+  scoring, but wrong) signal from.
+- Owner asked directly whether the retrieval architecture itself was "naive" and
+  wanted the real options laid out: hybrid (dense + keyword) search, cross-
+  encoder reranking, a larger embedding model, and query expansion, each with
+  concrete merits/demerits given this project's constraints (free tier, a
+  voice-agent latency budget already measured as tight in Phase 1, Supabase
+  Postgres already available). Recommended hybrid search specifically because it
+  fixes this exact failure class (acronyms/names/numbers dense embeddings
+  under-weight) using infrastructure already present (Postgres full-text search)
+  with no added per-query latency, unlike reranking. Owner chose hybrid search.
+- **Implemented it in `match_chunks` itself**, not as a parallel function —
+  added a generated `tsvector` column (`text_search`, populated automatically by
+  Postgres from `text` on every insert, no ingestion-code change needed) and a
+  GIN index, then rewrote the SQL function around a deliberate two-stage design:
+  dense cosine similarity still decides *eligibility* (a chunk must clear
+  `match_threshold` on real semantic similarity to be considered at all — this
+  is unchanged, unweakened, still exactly what ADR-004's anti-hallucination gate
+  requires), and only *among already-eligible candidates* does Reciprocal Rank
+  Fusion (combining dense rank and `ts_rank_cd` keyword rank, `1/(60+rank)` per
+  the standard RRF constant) decide final order. This was a deliberate design
+  choice over a single blended score: a keyword hit alone can never rescue a
+  chunk that never cleared the real similarity bar, keeping the threshold gate's
+  meaning exactly what the spec says it should be.
+- Also tuned `RETRIEVAL_THRESHOLD` from 0.35 to 0.5 based on the real observed
+  noise ceiling (~0.46 for genuinely unrelated content against this specific
+  corpus and embedding model), updating both `.env` and `.env.example` (with a
+  comment explaining where 0.5 came from, so a fresh clone doesn't inherit an
+  unverified placeholder the way this one did).
+- Re-ran the full validation suite after the fix: **all 5 spot-checks now pass**,
+  including CGPA (Education chunk now ranks #1 via the keyword boost, even
+  though its raw dense similarity is still lower than several competitors), and
+  the out-of-scope query still correctly returns `no_match` — the gate wasn't
+  weakened by adding the keyword signal.
+
+**Why**
+
+This is the clearest instance yet of why `DATA_INGESTION.md` §9 insists on
+validating "at the data layer" before touching the voice pipeline: a retrieval
+ranking bug that would have surfaced as an inexplicable refusal deep inside a
+live voice conversation (Phase 3+) was instead caught, understood, and fixed
+with a SQL query and a printed table, in minutes rather than a debugging session
+under time pressure later. The architecture conversation mattered for a
+different reason: the owner asked a direct, well-formed question about whether
+the system was using a weak algorithm, and answering it honestly (yes, pure
+dense retrieval has a well-known blind spot, here's what actually fixes it and
+what each option costs) is what let them make a real, informed trade-off call
+instead of either blindly accepting "it's fine" or over-correcting to the
+heaviest available fix (reranking) without knowing it would cost latency this
+project can't currently spare.
+
+**Decisions made**
+
+- `match_chunks` now requires a `query_text` parameter alongside
+  `query_embedding` — a breaking change to the RPC's signature, applied now
+  while only `validate.py` calls it, specifically so Phase 3's `retrieval.py`
+  is written against the final contract from the start rather than needing a
+  second migration later.
+- Hybrid search's keyword signal can only reorder eligible candidates, never
+  admit an ineligible one — the anti-hallucination threshold gate's semantics
+  (ADR-004) are treated as non-negotiable, not something a ranking improvement
+  gets to quietly loosen.
+- `RETRIEVAL_THRESHOLD=0.5` is the new default, empirically grounded rather
+  than carried over from an unverified placeholder — still explicitly subject
+  to further tuning in Phase 3 against the full `TEST_PLAN.md` question set,
+  same as before.
+
+**Verification**
+
+- Ran `validate.py` against live Supabase three times: once with the original
+  dense-only `match_chunks` at the old threshold (surfaced both bugs), once
+  after tuning the threshold alone (fixed the out-of-scope gate, left CGPA
+  failing), once after adding hybrid search (all 5 spot-checks plus the
+  out-of-scope check pass).
+- Confirmed the new `text_search` column and its GIN index actually exist and
+  are populated on real rows via direct `information_schema`/`pg_indexes`
+  queries after re-running `setup_db()`, not assumed from the DDL succeeding.
+- Structural validation (chunk count, floor/ceiling, nulls, dims, duplicate
+  hashes) re-confirmed passing after the schema change.
+- Scanned the diff for secret-shaped strings before staging — none found.
+- Committed as `750b2e8`.
