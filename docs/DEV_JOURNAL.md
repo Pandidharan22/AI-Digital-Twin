@@ -1526,3 +1526,55 @@ inaccurate schema.
   column-by-column.
 - Scanned the diff for secret-shaped strings before staging — none found.
 - Committed as `c0fe898`, separate from this journal entry.
+
+---
+
+## 2026-08-18 — Phase 2: Marked complete in CLAUDE.md status
+
+**What happened**
+
+- Checked off Phase 2 in `CLAUDE.md` and rewrote "Now working on" to point at Phase 3
+  (grounding and citations — the graded feature), summarizing where the corpus and
+  retrieval layer actually landed: 51 chunks live in Supabase across the resume,
+  `context.md`, and 6 curated GitHub repos, ingestion re-runnable and idempotent,
+  retrieval hybrid (dense + keyword) rather than the naive dense-only design it started
+  the phase with.
+- Carried forward four open items rather than letting Phase 2's close bury them: the
+  two still-unresolved Phase 1 numbers (LLM latency, barge-in timing — unchanged, still
+  waiting on Phase 3's real prompt), plus two new Phase 2 findings that are real but
+  explicitly not fully closed — `RETRIEVAL_THRESHOLD=0.5` is empirically grounded but
+  still interim pending the full 20-question test set, and `bge-small`'s demonstrated
+  acronym-anchoring weakness (the CGPA case) is compensated for by hybrid search in the
+  one case that was actually tested, not proven fixed in general.
+- Recorded this session's two biggest decisions in the status block itself, not just
+  buried in individual journal entries: GitHub ingestion via plain REST rather than an
+  MCP client, and the curated (not exhaustive) repo list — both real architectural
+  calls a fresh session would need to know about immediately, not rediscover by reading
+  every entry above this one.
+
+**Why**
+
+Same reasoning as the Phase 0 and Phase 1 equivalent entries: `CLAUDE.md`'s status
+section exists specifically so a session with zero memory of this conversation — a
+different Claude Code session, or the owner returning after a break — can get oriented
+in under a minute. That only holds if the section is rewritten the moment a phase
+actually closes, with the real open threads named explicitly rather than implied.
+
+**Decisions made**
+
+- None beyond the status rewrite itself.
+
+**Verification**
+
+- Re-read `BUILD_PLAN.md`'s Phase 2 exit criteria list against what was actually
+  verified this phase, one by one, before checking the box: 40–150 chunks (51, in
+  range) ✓, every chunk has meaningful `source`/`section` (verified via
+  `validate.py`'s structural checks) ✓, re-running produces zero duplicates (verified
+  three times against live Supabase in the ingest-orchestrator step) ✓, all 5 spot-
+  check queries return the correct top chunk (true only after the hybrid-search fix —
+  honestly false before it) ✓, out-of-scope query scores below threshold (true only
+  after the threshold retune — honestly false before it) ✓. Every box reflects a real,
+  live-verified result, not an assumption.
+- Scanned the diff for secret-shaped strings before staging — none found.
+- `git status --short` after staging → only `CLAUDE.md`.
+- Committed as `638243f`, separate from this journal entry.
