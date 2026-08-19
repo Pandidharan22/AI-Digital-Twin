@@ -1039,3 +1039,94 @@ threshold can't distinguish from a real answer.
 - Scanned the diff for secret-shaped strings before staging — none found.
 - `git status --short` after staging → only the one intended file.
 - Committed as `af8358b`, separate from this journal entry.
+
+---
+
+## 2026-08-18 — Phase 2: GitHub loader (REST) — and a real curation call
+
+**What happened**
+
+- Verified the real API surface before writing anything: called
+  `GET /users/{username}/repos` directly with the PAT to see actual shape/fields
+  (`fork`, `archived`, `language`, `description`, `topics`), and confirmed
+  `GET /repos/{owner}/{repo}/readme` with `Accept: application/vnd.github.raw`
+  returns raw markdown text directly (no base64 decoding needed) and 404s cleanly
+  for repos with no README — rather than assuming either shape from memory.
+- Built `ingestion/loaders/github_loader.py`: lists repos, filters out forks and
+  archived repos, fetches each README, strips badge lines (regex against the
+  `[![...)](...)]  `/`![...](...)`  markdown-image shapes) and markdown horizontal
+  rules, skips install/license/contributing/table-of-contents sections by header
+  match, and splits the rest on `#`/`##` headers — same shape as the markdown
+  loader, plus per-repo metadata (description, language, topics) folded into the
+  first "Overview" chunk, and every chunk carries the repo's real `html_url` as
+  `source_url` (the one loader where that field isn't null).
+- Renamed the file from the skeleton's `github_mcp.py` and updated
+  `loaders/__init__.py`'s docstring, closing out the naming half of the REST-over-MCP
+  decision from the planning entry above.
+- **Ran it against the real account with no curation filter first**, deliberately,
+  to see actual scale before assuming: 212 chunks across 22 non-fork repos. Most of
+  that volume was coursework/practice repos — `Movie-App`, `Pneumonia-Prediction-
+  using-Convolutional-Neural-Networks`, `Named-Entity-Recognition`, and similar —
+  that neither the resume nor `context.md` ever mentions. Combined with the 22
+  chunks already produced by the resume and `context.md` loaders, that's 234+
+  chunks against `BUILD_PLAN.md`'s 40–150 healthy-range exit criterion, and squarely
+  the failure mode `DATA_INGESTION.md` §7 warns about by name: "a bot that cites
+  `test-repo-3` looks careless."
+- Surfaced this to the owner rather than deciding unilaterally which projects
+  represent them professionally — that's a real identity/narrative call, not a
+  technical one. Proposed a curated list matching what the resume and interview
+  already reference (the four resume projects, the Mockbuilder failure story, and
+  this project itself); owner approved it as proposed. Added `CURATED_REPOS` as an
+  explicit, hand-maintained set in the loader — documented in its own comment as
+  intentionally not auto-growing when new repos get created, so scope stays a
+  deliberate choice each time rather than silent drift.
+- Re-ran with the curation filter applied: **36 chunks across the 6 intended repos**,
+  confirmed by grouping the real output by repo and printing every section header
+  and word count.
+- One more real bug caught by reading actual output rather than trusting the badge
+  regex worked: the RAG repo's stripped README left a dangling `---` markdown
+  horizontal rule at the end of its first chunk. Added an `_HR_LINE` filter
+  alongside the badge filter once spotted, then re-verified the specific chunk text
+  directly.
+- Noted, not fixed: printing chunk section headers containing real emoji (`🚀`,
+  `🔧`) crashes on `print()` in this Windows terminal (`cp1252` can't encode them) —
+  confirmed via `.encode('ascii', 'replace')` that this is a terminal display
+  limitation, not corrupted data; the actual stored strings are correct UTF-8 and
+  will render fine wherever the citation UI actually runs.
+
+**Why**
+
+Curation mattered here for exactly the reason `DATA_INGESTION.md` names: retrieval
+quality is capped by corpus quality, and a corpus padded with irrelevant coursework
+repos doesn't just risk citing something embarrassing on an unlucky query — it also
+dilutes what a broad question like "what have you built?" surfaces in the top-k
+results. Asking rather than picking a heuristic (like "has a description set")
+mattered because that heuristic turned out not to even correlate with what actually
+matters — the flagship RAG repo has no `description` field set at all, so a
+field-based filter would have silently dropped exactly the project the owner cares
+most about while keeping lower-value ones that happen to have a description.
+
+**Decisions made**
+
+- GitHub ingestion is curated by an explicit allow-list, not "all non-fork repos" —
+  permanently, not just for this run. Growing the list is a deliberate edit to
+  `CURATED_REPOS`, not automatic.
+- Boilerplate stripping now covers both badge images and horizontal rules; if a
+  future repo's README reveals another boilerplate shape, the same "strip a
+  specific verified pattern" approach applies rather than a broad catch-all.
+
+**Verification**
+
+- Ran the loader against the real GitHub API twice: once uncurated (212 chunks, used
+  to make the curation decision concrete rather than theoretical) and once after
+  adding `CURATED_REPOS` (36 chunks, matching the approved 6-repo list exactly).
+- Printed every chunk's section header, word count, and `source_url` per repo and
+  read them for coherence.
+- Directly inspected the badge-stripped and hr-stripped text of the RAG repo's first
+  chunk to confirm the cleanup actually worked on real content, not just that the
+  regex compiled.
+- Scanned the diff for secret-shaped strings before staging — none found (the loader
+  reads `GITHUB_TOKEN` from the environment, never contains one).
+- `git status --short` after staging → the rename (delete + new file) and the one
+  `__init__.py` docstring edit, nothing else.
+- Committed as `8a0ceff`, separate from this journal entry.
