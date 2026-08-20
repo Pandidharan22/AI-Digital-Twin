@@ -9,11 +9,12 @@ Covers: FR-1.4, FR-1.6, FR-2.1-2.3.
 
 import logging
 
-from livekit.agents import Agent, AgentServer, AgentSession, ChatMessage, JobContext
+from livekit.agents import AgentServer, AgentSession, ChatMessage, JobContext
 from livekit.agents.inference import TurnDetector
 from livekit.plugins import deepgram, google, silero
 
 from . import config
+from .twin_agent import TwinAgent
 
 logger = logging.getLogger("voice_twin.agent")
 
@@ -86,20 +87,20 @@ async def entrypoint(ctx: JobContext) -> None:
                 m.get("e2e_latency"),
             )
 
-    # Trivial, no-persona prompt for this phase: no retrieval, no owner name,
-    # no tools. The real TwinAgent (CITATION_SPEC.md Sec5) arrives in Phase 3.
-    agent = Agent(
-        instructions=(
-            "You are a friendly, concise voice assistant helping verify that an "
-            "audio pipeline works end to end. Keep replies to one or two short "
-            "sentences. Never use markdown, bullet points, asterisks, or emoji "
-            "-- your words are spoken aloud, not displayed as text."
-        )
-    )
+    # Phase 3: the real grounded persona (CITATION_SPEC.md Sec5) replaces
+    # Phase 1's trivial no-persona placeholder -- retrieval, owner name, and
+    # the search_my_background tool are all live from here on.
+    agent = TwinAgent()
 
     await session.start(agent=agent, room=ctx.room)
     logger.info("[room=%s] session started, sending greeting", ctx.room.name)
 
+    # No factual claim in the greeting itself, so the prompt's own rule ("do
+    # not call the search tool for greetings") keeps this from triggering a
+    # retrieval + citation publish before the visitor has asked anything.
     session.generate_reply(
-        instructions="Greet the user in one short sentence and say you're ready to chat."
+        instructions=(
+            f"Greet the visitor in one short sentence as {config.OWNER_NAME}'s voice "
+            "twin, and invite them to ask about your background."
+        )
     )
