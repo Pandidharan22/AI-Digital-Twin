@@ -31,3 +31,20 @@ GEMINI_API_KEY = os.environ["GEMINI_API_KEY"]
 # resolved to "gemini-3.7-flash" at time of writing) -- using the alias avoids
 # repeating this exact breakage the next time a pinned version is retired.
 GEMINI_MODEL = os.environ.get("GEMINI_MODEL", "gemini-flash-latest")
+
+# Supabase -- retrieval.py talks to match_chunks() through the supabase-py RPC
+# client (same client ingestion/validate.py uses), not a direct psycopg
+# connection. No DDL happens at query time, so the service key + REST client
+# is sufficient; DATABASE_URL (direct Postgres) stays ingestion-only.
+SUPABASE_URL = os.environ["SUPABASE_URL"]
+SUPABASE_SERVICE_KEY = os.environ["SUPABASE_SERVICE_KEY"]
+
+# Retrieval tuning -- ADR-004's anti-hallucination gate. 0.5 empirically set in
+# Phase 2 against this corpus's real out-of-scope similarity scores (see
+# docs/ARCHITECTURE.md ADR-004 Outcome); still interim pending Phase 3 tuning
+# against the full docs/TEST_PLAN.md question set.
+RETRIEVAL_THRESHOLD = float(os.environ.get("RETRIEVAL_THRESHOLD", 0.5))
+RETRIEVAL_TOP_K = int(os.environ.get("RETRIEVAL_TOP_K", 4))
+
+# Identity -- substituted into the system prompt (CITATION_SPEC.md Sec5).
+OWNER_NAME = os.environ["OWNER_NAME"]
