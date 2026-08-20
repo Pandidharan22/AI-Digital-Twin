@@ -1578,3 +1578,88 @@ actually closes, with the real open threads named explicitly rather than implied
 - Scanned the diff for secret-shaped strings before staging — none found.
 - `git status --short` after staging → only `CLAUDE.md`.
 - Committed as `638243f`, separate from this journal entry.
+
+---
+
+## 2026-08-20 — Phase 3: `retrieval.py` — query embedding, hybrid search, threshold gate
+
+**What happened**
+
+- Implemented `agent/retrieval.py`, the first piece of the grounding layer: a single
+  async function, `retrieve(query: str) -> dict`, that embeds the query, runs it
+  against Supabase's `match_chunks` RPC (the hybrid dense+keyword function Phase 2
+  built), and returns the exact `CITATION_SPEC.md` Sec3 contract — `status: "match"`
+  with up to `RETRIEVAL_TOP_K` chunks, or `status: "no_match"` with an empty result
+  set and the refusal `instruction` string sitting inside the returned data itself,
+  not only the system prompt.
+- Reused `ingestion/embedder.py`'s `embed_query()` rather than re-implementing query
+  embedding — same model, same query-instruction prefix, one place that logic lives.
+  Reused the same `match_chunks(query_embedding, query_text, match_threshold,
+  match_count)` RPC signature `ingestion/validate.py` already calls, so query-time
+  retrieval and Phase 2's validation spot-checks are provably exercising the identical
+  code path on the database side.
+- The one piece of real design work: `embed_query()` (CPU-bound `sentence-transformers`
+  inference) and supabase-py's `.rpc().execute()` (a synchronous HTTP call — the
+  installed `supabase` package ships no async client) are both blocking calls. Called
+  directly from inside an `async def` in the LiveKit worker, either one would stall the
+  worker's single event loop for its duration — not just the current room's turn, but
+  audio processing for every other room the worker happens to be servicing
+  concurrently. `retrieve()` pushes the whole embed+query sequence into a thread via
+  `asyncio.to_thread`, so the event loop stays free while it runs. This is exactly the
+  kind of latency-budget concern `SRS.md` NFR-1.3 (retrieval < 100ms) and NFR-1.1/1.2
+  (end-to-end latency targets) are about — a blocking call here wouldn't just miss its
+  own budget, it would silently tax every other in-flight conversation too.
+- Added the config `retrieval.py` needed to `agent/config.py` rather than reading
+  `os.environ` locally: `SUPABASE_URL`, `SUPABASE_SERVICE_KEY`, `RETRIEVAL_THRESHOLD`
+  (default `0.5`, carrying forward Phase 2's empirically-grounded value),
+  `RETRIEVAL_TOP_K` (default `4`), and `OWNER_NAME` (needed by Phase 3's next step, the
+  system prompt, so added now rather than in a second pass). Kept `DATABASE_URL` as
+  ingestion-only — query-time retrieval only ever calls the `match_chunks` RPC through
+  PostgREST, never opens a direct Postgres connection, so there's no DDL/raw-SQL need
+  at request time the way ingestion's `setup_db()` has.
+
+**Why**
+
+`CITATION_SPEC.md`'s whole argument is that a citation has to be "a record of what the
+system actually retrieved, not a claim the language model makes about its sources" —
+that only holds if the retrieval layer is the single place chunks get selected and
+scored, with nothing upstream (the LLM, the prompt) able to influence which chunks
+"count." Building `retrieval.py` as a standalone module with one clear return contract,
+before writing the tool wrapper or the agent class that calls it, keeps that boundary
+real in the code, not just in the docs: the tool method in `twin_agent.py` (next step)
+will call `retrieve()` and hand back exactly what it returns — no reshaping, no
+LLM-visible step in between where the contract could leak.
+
+**Decisions made**
+
+- Query-time retrieval talks to Supabase via the same `supabase-py` REST/RPC client
+  ingestion already uses, not a raw `psycopg` connection — no DDL happens at request
+  time, so there's nothing a direct Postgres connection buys here that the RPC client
+  doesn't already give, and it keeps `DATABASE_URL` (a more powerful credential) out of
+  the runtime worker's environment entirely.
+- Blocking work (embedding + the RPC call) is wrapped in `asyncio.to_thread` rather than
+  left as a direct call in an `async def` — a deliberate, non-obvious choice made before
+  it could cause a hard-to-diagnose cross-room latency bug once concurrent visitors are
+  real ish (Gemini free tier's ~10 RPM ceiling in `ARCHITECTURE.md` Sec7 already implies
+  more than one visitor is a real near-term case, not a hypothetical).
+- `RetrievedChunk` is a `TypedDict`, not a dataclass or bare dict-in-comment — cheap
+  self-documentation for the shape the tool layer and citation layer both consume next,
+  with no runtime cost.
+
+**Verification**
+
+- Ran `retrieve()` live against the real Supabase corpus (not mocked) for both branches:
+  `"What are you working on right now?"` → `status: "match"`, 4 results, top scores
+  0.55–0.62, correct chunks (`context.md` "What I'm working on right now", Job-Hunt-AI
+  roadmap) — matches Phase 2's own spot-check expectations for this query.
+  `"What's your favorite pizza topping?"` → `status: "no_match"`, empty results,
+  instruction string present — the out-of-scope refusal gate holds at the module level,
+  same as it did in `validate.py`'s check, now exercised through the actual code path
+  the running agent will use.
+- Confirmed both branches return exactly the field names `CITATION_SPEC.md` Sec3
+  specifies (`source`, `source_type`, `section`, `text`, `score`, `source_url` on
+  match; `status`/`results`/`instruction` on no_match) by inspecting the live output,
+  not just by reading the code.
+- Scanned the diff for secret-shaped strings before staging — none found.
+- Committed as `deff45e`, work only — this journal entry is the separate commit that
+  follows it, per `CLAUDE.md`'s log-then-commit sequence.
