@@ -1663,3 +1663,85 @@ LLM-visible step in between where the contract could leak.
 - Scanned the diff for secret-shaped strings before staging — none found.
 - Committed as `deff45e`, work only — this journal entry is the separate commit that
   follows it, per `CLAUDE.md`'s log-then-commit sequence.
+
+---
+
+## 2026-08-20 — Phase 3: TwinAgent, citations.py, and the real system prompt
+
+**What happened**
+
+- Wrote the real content of `agent/prompts/system_prompt.md` — the grounding and
+  voice contract from `CITATION_SPEC.md` Sec5, verbatim, with `[NAME]` left as a
+  literal placeholder in the file rather than baked to a real name. The prompt is
+  meant to stay editable without touching code (`CLAUDE.md`'s Key Files table calls
+  it out specifically: "editable, not in code"), so the substitution happens at load
+  time, not at file-authoring time.
+- Implemented `agent/twin_agent.py`'s `TwinAgent(Agent)`: `_load_instructions()` reads
+  that prompt file and does the one substitution (`[NAME]` → `config.OWNER_NAME`),
+  and `search_my_background` is a `@function_tool`-decorated method (SDK's "Style B" —
+  see `docs/SDK_NOTES.md` Sec2) with the exact docstring `CITATION_SPEC.md` Sec3
+  specifies, since the decorator parses the docstring into the description the LLM
+  actually reads to decide when to call the tool — it's API contract text, not a
+  comment.
+- Implemented `agent/citations.py`'s `publish(turn_id, query, retrieval_result)`:
+  reshapes whatever `retrieval.py`'s `retrieve()` returned into the exact wire schema
+  `CITATION_SPEC.md` Sec4 defines, and sends it over the data channel via
+  `get_job_context().room.local_participant.publish_data(..., topic="citations")` —
+  the pattern `docs/SDK_NOTES.md` Sec3 verified against the installed SDK rather than
+  assumed. On `no_match`, `sources` is built from an empty `results` list, so it comes
+  out `[]` — not omitted, not null — which is what lets the frontend's eventual
+  citations listener tell "no sources for this turn" apart from "sources not sent yet"
+  (FR-4.6 needs that distinction to clear stale cards correctly).
+- Wired the two together inside `search_my_background`: retrieve, then `await
+  citations.publish(...)`, then return the same result to the LLM as the tool's return
+  value. Used `context.speech_handle.id` — a real per-turn identifier the SDK already
+  assigns to every assistant turn (confirmed by reading `SpeechHandle`'s source, not
+  assumed) — as `turn_id`, instead of inventing a second counter that would have to be
+  kept in sync with the SDK's own turn bookkeeping for no reason.
+
+**Why**
+
+The ordering inside `search_my_background` — publish, *then* return — is the actual
+mechanism behind ADR-005's "citations published before generation" claim, not just a
+docs statement. The tool's return value is what the LLM sees and composes its spoken
+reply from; nothing about *generating that reply* can happen until the tool call
+returns. So awaiting `citations.publish()` before the `return result` line is what
+structurally guarantees the data-channel message reaches the room before the LLM has
+produced a single token of the answer it supports — the ordering isn't a convention to
+remember, it's enforced by the fact that Python doesn't reach `return` until the
+`await` above it finishes.
+
+**Decisions made**
+
+- `[NAME]` substitution happens in `twin_agent.py`, not by hand-editing the prompt
+  file with the real name — keeps `system_prompt.md` reusable/shareable without
+  embedding personal identity into the one file `CLAUDE.md` singles out as the
+  editable grounding contract.
+- `citations.publish()` takes `retrieval_result` as a plain dict (the exact shape
+  `retrieve()` returns) rather than a shared typed object between the two modules —
+  the CITATION_SPEC.md Sec3 and Sec4 schemas are deliberately different shapes (Sec3
+  is the tool contract the LLM sees; Sec4 is the wire schema the frontend sees), and
+  keeping them as two separate, independently-verifiable transformations matches that
+  intentional difference rather than papering over it with one shared type.
+
+**Verification**
+
+- Instantiated `TwinAgent()` directly and confirmed: `instructions` contains the real
+  owner name with zero remaining `[NAME]` occurrences; `a.tools` has exactly one
+  discovered tool; its `.info.name` is `search_my_background` and `.info.description`
+  matches `CITATION_SPEC.md` Sec3's docstring exactly — the auto-discovery path
+  (`Agent.__init__` scanning for `@function_tool` methods, per `SDK_NOTES.md` Sec2)
+  works as documented, not assumed.
+- Ran the real `retrieve()` → `citations.publish()` sequence end to end (with a fake
+  `get_job_context()`/room standing in for the LiveKit room, since no live session
+  exists yet outside a real call) for both a match and a no_match query, and inspected
+  the actual JSON that would go out on the data channel: field names, nesting, and the
+  `no_match` → `"sources": []` shape all match `CITATION_SPEC.md` Sec4 exactly.
+- Did not yet run this inside a live `AgentSession`/real LiveKit room — `main.py`
+  still runs Phase 1's placeholder `Agent`, not `TwinAgent`. That's the next step
+  (`BUILD_PLAN.md` Day 3 item 4, "test by voice: does it retrieve, ground, and
+  refuse?") and needs `main.py` rewired plus an actual voice session, not just this
+  module-level verification.
+- Scanned the diff for secret-shaped strings before staging — none found.
+- Committed as `7914376`, work only — this journal entry is the separate commit that
+  follows it, per `CLAUDE.md`'s log-then-commit sequence.
