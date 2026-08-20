@@ -1745,3 +1745,65 @@ remember, it's enforced by the fact that Python doesn't reach `return` until the
 - Scanned the diff for secret-shaped strings before staging — none found.
 - Committed as `7914376`, work only — this journal entry is the separate commit that
   follows it, per `CLAUDE.md`'s log-then-commit sequence.
+
+---
+
+## 2026-08-20 — Phase 3: wired `main.py` to `TwinAgent`
+
+**What happened**
+
+- Swapped Phase 1's placeholder `Agent(instructions="...generic pipeline-check
+  persona...")` out of `agent/main.py`'s entrypoint for `TwinAgent()` — the real
+  grounded persona built over the last two steps is now what actually joins the room,
+  not just what's importable and unit-verifiable.
+- Removed the now-unused `Agent` import from `main.py` (nothing there constructs a
+  bare `Agent` anymore; `TwinAgent` is imported from `.twin_agent` instead).
+- Updated the FR-1.6 greeting instructions passed to `session.generate_reply()` to
+  introduce the persona by `config.OWNER_NAME` and invite background questions,
+  instead of the old "say you're ready to chat" placeholder text that made no
+  reference to who the visitor is actually talking to.
+- Left a short comment at the greeting call-site noting *why* it's safe for the
+  greeting not to trigger retrieval: the greeting instruction carries no factual claim
+  about the owner, so `system_prompt.md`'s own rule ("do not call the search tool for
+  greetings, thanks, or clarifying questions") is what keeps this specific
+  `generate_reply()` call from firing `search_my_background` — this is enforced by the
+  prompt, not by anything special in `main.py`'s code.
+
+**Why**
+
+Everything built in the previous two steps (`retrieval.py`, `TwinAgent`,
+`citations.py`) was correct in isolation but literally could not run — `main.py` was
+still constructing Phase 1's disposable placeholder `Agent` and handing that to
+`session.start()`. Wiring it is a small diff, but it's the one change that turns three
+separately-verified modules into an actual running voice agent for the first time.
+This is also the natural point to stop and hand off: everything downstream of this
+(does the tool actually get called mid-conversation, does the citation show up on a
+real data channel subscriber, does the refusal sound natural spoken aloud) requires an
+actual microphone and a human on the other end of the conversation — not something
+verifiable by running a script.
+
+**Decisions made**
+
+- None beyond the wiring itself — this step deliberately didn't touch retrieval
+  logic, the prompt contract, or the citation schema, to keep the diff isolated to
+  "is the real agent now reachable," matching `CLAUDE.md`'s "one phase at a time"
+  discipline at the level of individual build-plan items, not just whole phases.
+
+**Verification**
+
+- Ran `python -c "import agent.main"` and confirmed: the module imports cleanly end to
+  end (no import errors from the `TwinAgent`/`retrieval`/`citations` chain now pulled
+  into `main.py`), `server` is a real `AgentServer` instance, and `entrypoint` is
+  registered as expected — exit code 0.
+- Did **not** run a live voice session against LiveKit Cloud — that requires a
+  microphone and a human conversing with the agent in real time (`BUILD_PLAN.md` Day 3
+  item 4's actual "test by voice" step), which isn't something this session can do
+  itself. Import-level verification confirms the wiring is structurally correct; it
+  does not confirm the tool actually fires mid-conversation, that a real citations
+  payload lands on a subscribed client, or that refusals sound right spoken aloud.
+  Flagging this explicitly rather than letting "it imports" quietly stand in for "it
+  works" — per `CLAUDE.md`'s "run things, don't say this should work" rule, the
+  honest status is: wired and import-verified, not yet voice-tested.
+- Scanned the diff for secret-shaped strings before staging — none found.
+- Committed as `f99d195`, work only — this journal entry is the separate commit that
+  follows it, per `CLAUDE.md`'s log-then-commit sequence.
