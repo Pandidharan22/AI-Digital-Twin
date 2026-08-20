@@ -1807,3 +1807,87 @@ verifiable by running a script.
 - Scanned the diff for secret-shaped strings before staging — none found.
 - Committed as `f99d195`, work only — this journal entry is the separate commit that
   follows it, per `CLAUDE.md`'s log-then-commit sequence.
+
+---
+
+## 2026-08-20 — Phase 3: first live voice test — silent hang traced to a Gemini 429, exposes missing FR-7.2 fallback
+
+**What happened**
+
+- Ran the worker for real for the first time (`uv run python -m livekit.agents start
+  agent/main.py`), confirming it registers with LiveKit Cloud (`registered worker`,
+  region India South) — Phase 1's "worker connects and logs registered" criterion,
+  now re-verified against the actual `TwinAgent`, not the Phase 1 placeholder.
+- Discovered along the way that `python -m livekit.agents console --connect-addr`
+  is **not** a standalone local-console flag the way older tutorials describe — reading
+  `livekit/agents/cli/cli.py`'s `_run_tcp_console` directly (its own docstring: "Run
+  console in TCP mode — connects to the Go CLI's TCP server") showed it now expects a
+  TCP address served by the separate `lk` Go CLI, not something you pass a bare
+  `start`-style invocation to. `docs/SDK_NOTES.md` Sec7 had flagged confirming this as
+  an open follow-up back in Phase 1 and never resolved it; resolved now, for real, by
+  reading the installed source rather than guessing. The actual test path that works:
+  `start` (connects the worker outbound to LiveKit Cloud, same as production) plus
+  LiveKit Cloud's newer **Agent Console** (replacing the old hosted Agents Playground —
+  confirmed via LiveKit's own docs, since UI navigation is exactly the kind of thing
+  that goes stale between a tutorial's publish date and now), reached from the
+  project dashboard's Agents section → **Launch Console**.
+- First real conversation: greeting exchange worked ("Hi, I'm audible?" → answered),
+  but `llm_ttft` was already 7.4s because the call needed two retries against a
+  `503 UNAVAILABLE` ("model currently experiencing high demand") before succeeding.
+  The very next turn ("Introduce yourself. In short.") — which the grounding prompt
+  correctly routes through `search_my_background`, since "introduce yourself" is a
+  factual claim about the owner's background — hit a genuine `429 RESOURCE_EXHAUSTED`:
+  `generativelanguage.googleapis.com/generate_content_free_tier_requests` capped at
+  **5 requests/minute** for `gemini-3.7-flash`, the model `GEMINI_MODEL=gemini-flash-
+  latest` currently resolves to. The plugin retried three more times internally (0.1s,
+  2s, 2s backoff) and then raised `APIConnectionError: failed to generate LLM
+  completion after 4 attempts`. `agent_state` dropped from `thinking` back to
+  `listening` with nothing spoken — from the owner's side, indistinguishable from an
+  infinite hang, because nothing tells the visitor anything went wrong.
+
+**Why this matters**
+
+Two distinct findings came out of one test session, and they need to stay distinct
+rather than getting collapsed into "the rate limit broke it":
+
+1. **A documentation correction.** `CLAUDE.md`'s stack table and `ARCHITECTURE.md`
+   Sec7's "known boundaries" both currently say Gemini free tier is "~10 RPM." The
+   real, live-observed number for whatever `gemini-flash-latest` resolves to right now
+   (`gemini-3.7-flash`) is **5 RPM** — half of what's documented, and easy to exceed
+   with nothing more than a greeting plus one grounded question in the same minute,
+   especially once 503 retries are also counted against it. This is a platform
+   constraint to document accurately, not a bug to fix in this codebase.
+2. **A real gap against `SRS.md` FR-7.2**, independent of what triggered it this time.
+   FR-7.1 ("retry with exponential backoff and jitter") is effectively already covered
+   by the `livekit-plugins-google` plugin's own built-in retry behavior, observed live
+   in this session's log. FR-7.2 ("if retry exhausts, the agent SHALL speak a graceful
+   fallback message... SHALL NOT fail silently") is **not** implemented anywhere in
+   `agent/main.py` or `twin_agent.py` — there is currently no code path that catches an
+   exhausted-retry LLM failure and says anything to the visitor. The 429 is what
+   *exposed* this gap today; a slow network blip or a transient Deepgram outage would
+   trip the identical silent-failure path later, rate limit or not. Diagnosing the
+   report as "found a rate limit" alone would have missed the actual product defect
+   underneath it.
+
+**Decisions made**
+
+- None yet — diagnosis only, logged before any fix, per the owner's explicit
+  instruction to log this finding first. The FR-7.2 fallback implementation and the
+  RPM documentation correction are both proposed next steps, not yet built.
+
+**Verification**
+
+- Root cause confirmed directly from the worker's own structured JSON logs for this
+  session (`console-3c384518`), not inferred — the exact `429` body, quota metric name,
+  and model (`gemini-3.7-flash`) are all present in the captured log, along with the
+  timestamps showing the second turn's LLM call failing at 16:20:29 UTC and the
+  session going silent (no further assistant turn) until the visitor disconnected at
+  16:22:12 UTC.
+- Confirmed the `console --connect-addr` finding by reading
+  `livekit/agents/cli/cli.py` and `livekit/agents/__main__.py` directly from the
+  installed package (`.venv/Lib/site-packages`), not from memory or an external
+  tutorial — consistent with `CLAUDE.md` rule 2's verification standard.
+- No code changed this entry — nothing to scan for secrets or stage beyond this file.
+- This entry is being committed on its own, at the owner's explicit request, ahead of
+  any fix — a deliberate, requested exception to the usual "work commit, then journal
+  commit" order, made because there is no work commit to sequence it after yet.
