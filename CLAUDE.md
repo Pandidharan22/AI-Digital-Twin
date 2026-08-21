@@ -142,8 +142,8 @@ Read the relevant doc **before** implementing:
       20-turn latency measurement still open)
 - [ ] Phase 4 — UX (connection states, mic flow, suggested questions, and the
       transcript panel are done; mobile polish still open)
-- [ ] Phase 5 — Deployment (first live deployment done and verified; several
-      hardening items still open — see below)
+- [ ] Phase 5 — Deployment (fully hosted on Render/Vercel/Fly.io, verified
+      end-to-end; a few hardening items still open — see below)
 - [ ] Phase 6 — Testing and submission
 
 **Now working on:** Phase 3's build and voice-verification are done —
@@ -162,27 +162,42 @@ to `TEST_PLAN.md`'s A2 phrasing since A1's literal wording is the known
 retrieval-ranking gap noted below). `TranscriptPanel.tsx` (FR-5.1) is also
 done, using `@livekit/components-react`'s own `useTranscriptions()` hook —
 the same mechanism behind LiveKit's Agent Console transcript view, no
-agent-side changes needed. Still open: mobile responsive layout.
+agent-side changes needed. UI was redesigned once already after owner
+feedback on the first live deployment (2026-08-21): single-column blended
+layout (no boxed transcript, no half-screen citations panel), a custom
+`MicToggle.tsx` replacing `ControlBar`, and `CitationsPanel.tsx` now labels
+each source by document type (Resume / Notes (context.md) / `<repo>` —
+README.md) instead of showing the raw retrieved excerpt. Still open: mobile
+responsive layout.
 
-**Phase 5, first live deployment is up and verified end-to-end**
-(2026-08-21): Token Service on Render
-(`https://voice-twin-api-46lk.onrender.com`, via the `render.yaml` Blueprint
-and a Token-Service-only `api/requirements.txt` kept separate from the shared
-`pyproject.toml`), frontend on Vercel
-(`https://ai-digital-twin-blue.vercel.app`), agent worker running as a
-long-lived local process (LiveKit dispatch is outbound-only, so this works —
-see `docs/DEPLOYMENT.md` Sec2's own sanctioned fallback). Verified cold, via
-unauthenticated `curl` and a browser tab with no prior site history, not
-trusted from a dashboard: the whole chain connects and the agent speaks its
-greeting. One real bug caught and fixed along the way — Vercel's Deployment
-Protection was silently gating the "public" link behind a Vercel login;
-disabled and re-verified. See `docs/DEV_JOURNAL.md`'s 2026-08-21 deployment
-entries for the full account.
+**Phase 5 is fully hosted and verified end-to-end** (2026-08-21/22): Token
+Service on Render (`https://voice-twin-api-46lk.onrender.com`, via the
+`render.yaml` Blueprint and a Token-Service-only `api/requirements.txt` kept
+separate from the shared `pyproject.toml`), frontend on Vercel
+(`https://ai-digital-twin-blue.vercel.app`), and the agent worker now on
+**Fly.io** (`agent/Dockerfile` + `fly.toml`, app `voice-twin-worker`,
+`performance-2x`/4GB dedicated CPU in `sin` — moved off the local machine
+that hosted it through the first deployment). The Fly move surfaced four
+real bugs, each fixed and verified via a live redeploy, not assumed: (1)
+`uv sync` resolving PyPI's CUDA torch build on Linux, fixed by pinning
+torch to `download.pytorch.org/whl/cpu` as a *direct* dependency (source
+overrides didn't bind to it as a transitive-only one); (2) Fly's `bom`
+region being deprecated for new resources, switched to `sin`; (3)
+`shared-cpu-2x` throttling badly enough under concurrent cold-starts to
+blow even a 30s `initialize_process_timeout`, fixed by moving to dedicated
+CPU; (4) the actual dominant cold-start cost turning out to be
+`SentenceTransformer`'s constructor hitting Hugging Face Hub over the
+network on every start (~19s, unauthenticated), fixed by baking the model
+into the image at build time and setting `HF_HUB_OFFLINE=1`. Full account
+in `docs/DEV_JOURNAL.md`'s 2026-08-21/22 entry. Earlier in Phase 5: Vercel's
+Deployment Protection was found silently gating the "public" link behind a
+Vercel login; disabled and re-verified.
 
-Still open before Phase 5's exit criteria are fully met: move the worker off
-the local machine to Fly.io, the 30-minute-idle-then-cold-open test, mobile
-Safari/cellular verification, the GitHub Actions ingestion cron, and
-confirming zero secrets in the frontend bundle by inspection.
+Still open before Phase 5's exit criteria are fully met: the
+30-minute-idle-then-cold-open test, mobile Safari/cellular verification, the
+GitHub Actions ingestion cron, and confirming zero secrets in the frontend
+bundle by inspection (spot-checked once already during the first deployment,
+not re-verified since).
 
 **Blocked by:** Nothing functionally. Open items: (1)/(2) the Phase 1 latency (LLM
 TTFT ~2.5s avg, one 7s spike) and barge-in timing (~455ms) numbers are still
