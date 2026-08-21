@@ -2335,3 +2335,75 @@ silently picking whichever number the rule technically outputs.
   anything committed to the repo).
 - Committed as `618eae2`, work only — this journal entry is the separate commit
   that follows it, per `CLAUDE.md`'s log-then-commit sequence.
+
+---
+
+## 2026-08-21 — Phase 3 Day 4: Token Service (api/main.py)
+
+**What happened**
+
+- Verified `livekit.api`'s `AccessToken`/`VideoGrants` builder API directly against
+  the installed package (`inspect.signature` on `AccessToken.__init__`,
+  `.with_identity`, `.with_grants`, `.with_ttl`, `.to_jwt`, and `VideoGrants.__init__`)
+  before writing any code, during this step's plan-mode pass — same discipline
+  `CLAUDE.md` rule 2 requires for the LiveKit Agents SDK, applied here to
+  `livekit-api` (a transitive dependency already installed, no new package needed
+  for the token logic itself).
+- Implemented `api/config.py` (new): loads `LIVEKIT_URL`/`LIVEKIT_API_KEY`/
+  `LIVEKIT_API_SECRET` only, plus a `FRONTEND_ORIGIN` for CORS defaulting to Vite's
+  dev port. Deliberately a separate module from `agent/config.py` rather than
+  reusing it — the token service's own docstring promises it never holds a
+  database or LLM credential, and importing `agent/config.py` would pull in
+  `GEMINI_API_KEY`/`SUPABASE_SERVICE_KEY` even if unused, which is exactly the kind
+  of accidental-blast-radius mistake worth designing out at the module boundary
+  rather than trusting discipline to avoid later.
+- Implemented `api/main.py`: `POST /token` mints a fresh room name
+  (`twin-{uuid4().hex[:8]}`) and participant identity
+  (`visitor-{uuid4().hex[:8]}`) per call, builds the grants
+  (`room_join`/`can_publish`/`can_subscribe`/`can_publish_data`, all `True` — the
+  data-publish grant matters because the agent worker publishes citations over the
+  data channel into this same room, so the visitor's own grant needs to already
+  permit receiving them), and sets a 15-minute TTL (FR-1.3). `GET /health` is a
+  trivial 200 OK, doubling as the future keep-warm target (NFR-2.1).
+- Added `fastapi` and `uvicorn[standard]` to `pyproject.toml` — the first new
+  runtime dependencies added since Phase 1's initial scaffold.
+- `NFR-3.4` (per-IP rate limiting on `/token`) explicitly **not** implemented —
+  noted in both the docstring and this entry as deferred to Phase 5/6 hardening,
+  not silently dropped from scope.
+
+**Why**
+
+This is the first of Day 4's two new subsystems (the frontend is next) and the one
+everything else depends on — a browser can't join a room without a token, and
+`BUILD_PLAN.md`'s Day 4 items assumed this already existed. Keeping it deliberately
+small (one route that matters, one health check, no auth beyond what CORS + TTL
+provide yet) matches the actual scope: this is infrastructure to unblock the
+citations UI, not a place to front-load Phase 5/6 hardening work that isn't needed
+to prove the citations contract end-to-end yet.
+
+**Decisions made**
+
+- `api/config.py` stays a separate module from `agent/config.py`, permanently, not
+  just for now — the credential-scoping argument above doesn't go away once the
+  frontend exists.
+- CORS is open to the Vite dev origin only for now, with an explicit code comment
+  and this entry both flagging that it needs tightening before deployment, so it
+  doesn't quietly ship permissive.
+- Left the running `uv run uvicorn api.main:app --port 8000` process up rather
+  than stopping it after verification, since the next step (frontend scaffold)
+  needs a live Token Service to fetch tokens from.
+
+**Verification**
+
+- Started the real service (`uv run uvicorn api.main:app --port 8000`) and hit both
+  endpoints with `curl` — not a unit test, the actual running server.
+- Decoded the returned JWT (via `PyJWT`, signature verification skipped since the
+  point was inspecting claims, not re-validating what `to_jwt()` already produced)
+  and asserted, against the real decoded payload: TTL is exactly 15 minutes
+  (`exp - nbf`), `video.roomJoin`/`video.canPublishData` are both `true`, the room
+  name starts with `twin-`, and the URL is a real `wss://` LiveKit Cloud endpoint —
+  every FR-1.1–1.3 claim checked against the actual token, not assumed from the
+  code reading correct.
+- Scanned the diff for secret-shaped strings before staging — none found.
+- Committed as `87d32a1`, work only — this journal entry is the separate commit
+  that follows it, per `CLAUDE.md`'s log-then-commit sequence.
