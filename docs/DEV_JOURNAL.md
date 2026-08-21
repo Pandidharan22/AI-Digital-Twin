@@ -2861,3 +2861,91 @@ a host ever sees it.
 - Scanned the diff for secret-shaped strings before staging — none found
   (`render.yaml`'s env var entries are keys only, `sync: false`, no values).
 - Committed as `51a7eb8`, work only.
+
+---
+
+## 2026-08-21 — Phase 5: First live deployment — Render, Vercel, worker
+
+**What happened**
+
+- Deployed the Token Service to Render via the `render.yaml` Blueprint added
+  in the previous entry — live at `https://voice-twin-api-46lk.onrender.com`,
+  `/health` returning `{"status": "ok"}`.
+- Deployed the frontend to Vercel, connected directly to the GitHub repo —
+  live at `https://ai-digital-twin-blue.vercel.app`.
+- **Found and fixed a real access bug via testing, not assumption.** The
+  first Vercel deployment URL obtained (via the GitHub Deployments API's
+  `environment_url` field, since the dashboard link the owner had was the
+  internal deployment-inspector page, not the public site) returned `HTTP
+  302` to `vercel.com/sso-api` on a plain unauthenticated `curl` — Vercel's
+  **Deployment Protection** was on, which would have put every visitor
+  behind a Vercel login wall, silently defeating the entire point of a
+  "hosted link anyone can open." Caught before telling the owner it was
+  ready, by actually curling the URL rather than trusting a `200` from the
+  Vercel dashboard (which reflects the owner's own authenticated session, not
+  what an anonymous visitor sees). Owner disabled Deployment Protection in
+  the project's own settings; re-verified with the same unauthenticated
+  `curl` afterward — clean `200`, no redirect.
+- Wired the two services together by env var, then verified each wiring
+  independently rather than trusting the dashboard save:
+  - Render's `FRONTEND_ORIGIN` set to the Vercel URL; verified with a `curl
+    -X POST /token -H "Origin: <vercel-url>"` showing
+    `access-control-allow-origin` echoing back that exact origin.
+  - Vercel's `VITE_TOKEN_SERVICE_URL` set to the Render URL and redeployed
+    (Vite bakes `VITE_*` vars in at build time — saving the env var alone
+    doesn't touch an already-built bundle); verified by fetching the actual
+    built JS bundle from the live site and grepping it for the Render
+    hostname, confirming `localhost:8000` was not what shipped.
+  - Also pushed a one-line fix for Vite's default `web-scaffold-tmp` page
+    title, still live on the deployed site until this push — confirmed via
+    the same bundle/title fetch method that the redeploy triggered by the
+    push actually picked it up.
+- **Full cold end-to-end verification**, not just each piece in isolation:
+  opened `https://ai-digital-twin-blue.vercel.app` in a browser tab with no
+  prior history with the site (the Browser tool's own fresh tab, over the
+  real public internet — not `localhost`, not the dev server). Watched the
+  agent-status pill go `Connecting…` → `Speaking…` within ~6 seconds, with
+  zero browser console errors throughout. That one observed transition is
+  proof the entire chain actually works end to end on the real deployed
+  infrastructure: the deployed frontend called the deployed Token Service,
+  got back a real token, opened a WebRTC connection to LiveKit Cloud, the
+  worker (still running as a local process, per the earlier entry's
+  documented trade-off — LiveKit dispatch is outbound from the worker, so it
+  doesn't matter that it isn't itself "hosted" anywhere) picked up the
+  dispatch, joined, and started speaking the greeting.
+
+**Why**
+
+Both real problems this session hit (the SSO wall, the stale bundle) share
+the same root cause: the *owner's own browser* — already logged into Vercel,
+already having built the page once before — could not have surfaced either
+one, because an authenticated session and a cached mental model of "I already
+fixed that" both paper over exactly the failure mode a genuinely fresh
+visitor would hit. Verifying with unauthenticated `curl` and a browser tab
+with no site history isn't paranoia here; it's the only vantage point that
+actually matches what `DEPLOYMENT.md`'s "works when someone else clicks it,
+cold" requirement is asking for.
+
+**Decisions made**
+
+- No new architecture decisions — this entry is deployment execution and
+  verification against decisions already recorded in the prior two entries.
+
+**Verification**
+
+- `curl` (unauthenticated, no browser session) against every URL before
+  calling it done: Render `/health` (`200`), the Vercel site root before and
+  after disabling Deployment Protection (`302` → `200`), the CORS preflight
+  behavior via a direct `POST /token` with an `Origin` header, and the built
+  JS bundle's contents for both the API hostname and the page title.
+  Nothing in this entry is reported as working from a dashboard screenshot or
+  a "should work now" — every claim traces to a command run and its output
+  read.
+- Live browser verification in a fresh tab against the real public URLs
+  (not `localhost`) — `get_page_text` showing the state transition, and
+  `read_console_messages` showing zero errors, at both the pre-title-fix and
+  post-title-fix points.
+- Still open, deliberately not done tonight (see `DEPLOYMENT.md`'s
+  pre-submission checklist and Sec4's mandatory cold-start test): the 30-minute-idle-then-cold-open test, moving the worker off the owner's laptop
+  to Fly.io, the GitHub Actions ingestion cron, and mobile-Safari/cellular
+  verification. Tracked in `CLAUDE.md`'s current-status section, not lost.
