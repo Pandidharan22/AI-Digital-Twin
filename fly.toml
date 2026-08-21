@@ -12,8 +12,8 @@ primary_region = "sin"
   dockerfile = "agent/Dockerfile"
 
 [[vm]]
-  size = "performance-2x"
-  memory = "4gb"
+  size = "shared-cpu-2x"
+  memory = "2gb"
 
 [processes]
   app = "python -m livekit.agents start agent/main.py"
