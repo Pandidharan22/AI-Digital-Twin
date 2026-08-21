@@ -3230,3 +3230,97 @@ and verified to close.
 - Scanned both diffs for secret-shaped strings before staging — none found.
 - Committed as `1ad5eaf` (prompt/config fix) and `10f8a2c` (citation
   labeling), each separate from this journal entry per protocol.
+
+---
+
+## 2026-08-21 — Phase 5: Worker crash — idle job-runner pool sized for a laptop
+
+**What happened**
+
+- Owner reported the local dev page wasn't connecting. Diagnosed rather than
+  just restarting blind: checked the worker's own log first, and it showed
+  the process had genuinely died — `curl` against its own HTTP port (`8081`)
+  returned connection-refused, and no worker process was left running at
+  all. The log's last lines before it went silent were a raw
+  `MemoryError` raised inside a ctypes callback (`ffi_event_callback`,
+  repeated five times) alongside `"job did not ack shutdown in time"` and
+  `"job executor is unresponsive"` warnings.
+- Restarted it once to see if this was a one-off; it crashed again within
+  ~30 seconds, this time with a clean, specific traceback: an `IPC` job
+  runner hit `initialize_process_timeout` (10s) while still loading its
+  model weights — `TimeoutError` inside
+  `livekit/agents/ipc/proc_pool.py:_proc_spawn_task`. Checked system memory
+  directly (`Get-CimInstance Win32_OperatingSystem`) rather than guessing:
+  free RAM had dropped from ~3.6GB to ~2.2GB between the two crashes, out of
+  15.6GB total.
+- Found the actual mechanism by reading `AgentServer`'s real constructor
+  signature via `inspect.signature()` (not docs, not memory) --
+  `num_idle_processes: int | ServerEnvOption[int] = ServerEnvOption(dev_default=0, prod_default=12)`.
+  This worker has to run via the `start` command for real room dispatch to
+  work at all (`console` mode's lower dev default doesn't apply --
+  `docs/SDK_NOTES.md` already established `start` as the only correct
+  invocation back in Phase 1), which means it was defaulting to **12** idle
+  processes kept warm at all times, each one independently loading
+  `torch` + `bge-small-en-v1.5` + `onnxruntime` for `agent/main.py`'s own
+  `_prewarm` hook. Twelve concurrent model loads against ~2-3GB of
+  actually-free RAM (this machine, tonight, with everything else already
+  running) is what crashed the process outright -- not a code bug, a
+  resource-sizing default tuned for real server hardware, silently wrong
+  for a laptop.
+- Added `agent/config.py`'s `WORKER_NUM_IDLE_PROCESSES` (env-overridable,
+  defaults to `2`) and passed it into `AgentServer(...)` in
+  `agent/main.py`. Also caught and fixed a small inconsistency while in
+  `config.py`: `RETRIEVAL_TOP_K`'s Python-level fallback default was still
+  `4`, one commit behind `.env`/`.env.example`'s already-bumped `5` — a
+  clone without the env var explicitly set would have silently diverged
+  from the documented default.
+- Restarted the worker a third time with the fix. Registered cleanly in
+  under 9 seconds (down from crashing before it ever finished), and picked
+  up a real room dispatch from the already-open local dev tab immediately
+  afterward. Reopened the browser preview (the session had dropped when the
+  worker died) and watched the agent-status pill move
+  `Connecting…` → `Speaking…` with the real greeting text, zero console
+  errors.
+
+**Why**
+
+Reading the actual crash log and checking real memory numbers before
+touching anything mattered here because the fix could easily have gone
+wrong in either direction: patching `_prewarm` to load the model lazily
+instead would have reintroduced the exact 13.79s per-turn latency spike
+that hook was built to eliminate in Phase 3 (see this file's earlier
+`_prewarm` entry), while blindly restarting on a loop would have kept
+crashing at the same resource ceiling. Reading `AgentServer`'s real
+constructor signature is the same "verify the installed package, don't
+assume the API" habit `CLAUDE.md` rule #2 has held since Phase 0 --
+`num_idle_processes` having a *different* default in dev vs. prod mode
+isn't something a general LiveKit tutorial would call out, since it only
+bites when `start` mode's higher default meets a resource-constrained host,
+which is exactly tonight's situation.
+
+**Decisions made**
+
+- `WORKER_NUM_IDLE_PROCESSES` defaults to `2` for now -- enough headroom for
+  one local visitor without repeating tonight's crash. Explicitly flagged in
+  both the code comment and `.env.example` as a value to raise once the
+  worker runs on real server hardware (Fly.io) instead of this laptop,
+  rather than left as an unexplained magic number.
+- Kept `_prewarm`'s eager-load-at-startup behavior unchanged -- the fix is
+  sizing the pool, not removing the optimization that pool exists to serve.
+
+**Verification**
+
+- Root cause confirmed from two independent, real signals: the process's own
+  exception traceback (not inferred from symptoms) and actual
+  `Get-CimInstance`-reported free memory before and after the second crash,
+  not assumed from "it's probably low on RAM."
+- `inspect.signature(AgentServer.__init__)` run directly against the
+  installed `livekit-agents==1.6.10` to confirm the real default value and
+  parameter name, rather than trusting recalled API shape.
+- Live restart verification: worker registered in ~9s (previously crashed
+  before completing registration), picked up a real dispatch, and the
+  browser showed the full `Connecting…` → `Speaking…` transition, greeting
+  text, and zero console errors -- checked via `get_page_text` and
+  `read_console_messages`, not assumed from the log alone.
+- Scanned the diff for secret-shaped strings before staging — none found.
+- Committed as `5425038`, work only.
