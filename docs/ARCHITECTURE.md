@@ -370,9 +370,16 @@ Indexes: HNSW on `embedding` (cosine distance) and GIN on `text_search` (full-te
 
 ## 7. Known boundaries (state these in the writeup)
 
-- **Concurrency.** Gemini free tier is ~10 RPM. Fine for single-visitor demo; concurrent
-  users need paid Gemini (~$0.30/M input tokens). The architecture doesn't change — only
-  the billing flag.
+- **Concurrency.** Gemini free tier is **5 RPM**, not the ~10 RPM originally assumed
+  here — corrected from a live 429 during Phase 3's first voice test (see
+  `DEV_JOURNAL.md`, 2026-08-20): `generativelanguage.googleapis.com/generate_content_
+  free_tier_requests` capped at 5 for `gemini-3.7-flash`, the model `gemini-flash-
+  latest` currently resolves to. Tight enough that a single visitor can trip it —
+  a greeting plus one grounded question (which needed a couple of 503 retries) was
+  enough in testing. Concurrent users make it worse; paid Gemini (~$0.30/M input
+  tokens) is the fix either way. The architecture doesn't change — only the billing
+  flag. FR-7.2's fallback speech (`agent/main.py`'s `session.on("error")` handler)
+  is what keeps a tripped limit from reading as a silent hang.
 - **Cold start.** Free-tier hosts sleep. Mitigated with keep-warm; production would use
   an always-on instance.
 - **Corpus staleness.** Bounded by ingestion cadence, not unbounded.

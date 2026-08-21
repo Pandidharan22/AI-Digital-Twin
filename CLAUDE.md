@@ -55,7 +55,7 @@ prototype.
 |---|---|---|
 | Transport | LiveKit Cloud | Free Build plan |
 | STT | Deepgram Nova-3 | Streaming; $200 free credit |
-| LLM | Gemini Flash | Free tier; ~10 RPM — handle 429s |
+| LLM | Gemini Flash | Free tier; 5 RPM (`gemini-3.7-flash`, verified live 2026-08-20) — handle 429s |
 | TTS | Deepgram Aura-2 | **Same credit as STT** |
 | Embeddings | `bge-small-en-v1.5` local | CPU, 384 dims |
 | Vector store | Supabase pgvector | Free tier |
