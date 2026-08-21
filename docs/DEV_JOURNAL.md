@@ -3324,3 +3324,137 @@ which is exactly tonight's situation.
   `read_console_messages`, not assumed from the log alone.
 - Scanned the diff for secret-shaped strings before staging — none found.
 - Committed as `5425038`, work only.
+
+---
+
+## 2026-08-21/22 — Phase 5: Worker moved off the laptop, onto Fly.io
+
+**What happened**
+
+Owner asked to close out the last major deferred item from the deployment
+sprint: move the agent worker off this machine and onto Fly.io, per
+`docs/DEPLOYMENT.md`'s original recommendation. Installed `flyctl` (a plain
+CLI download, not an account action) and Docker Desktop was already present
+but needed starting. Fly.io itself needed a real account with a card on
+file — owner created it and ran `flyctl auth login` themselves; verified
+from this session via `flyctl auth whoami`.
+
+**Four real, distinct problems found and fixed, each via evidence, not
+assumption:**
+
+1. **`uv sync` on Linux pulled the full CUDA torch stack.** A first local
+   Docker build attempt hit 5.5GB and failed on a flaky download partway
+   through. Read the actual layer-by-layer build output rather than
+   guessing: `nvidia-cublas` (403MB), `nvidia-cudnn` (349MB),
+   `nvidia-cusolver` (191MB), `cuda-toolkit`, `triton` — 2.5GB+ of pure GPU
+   dependencies this CPU-only project never touches. Fixed with
+   `[tool.uv.sources]`/`[[tool.uv.index]]` pinning torch to
+   `download.pytorch.org/whl/cpu` in `pyproject.toml` — but this didn't
+   work on the first two attempts (`uv lock -v` kept showing
+   `pypi.org/simple/torch/` as the resolved source despite the pin). Root
+   cause: torch was only a *transitive* dependency (via
+   `sentence-transformers`), and uv's source override doesn't reliably bind
+   to purely-transitive packages in this uv version. Making torch an
+   explicit direct dependency fixed it immediately — package count dropped
+   152 → 134, every `nvidia-*`/`cuda-toolkit`/`triton` entry gone. Verified
+   locally first (`torch.__version__` now reports `2.13.0+cpu`, embedder
+   still returns a real 384-dim vector) before ever touching the Docker
+   build again.
+2. **Fly's `bom` (Mumbai) region is deprecated for new resources.** First
+   deploy attempt failed outright at machine-creation with an explicit
+   error naming `sin` (Singapore) as the suggested alternative — a clean,
+   actionable error, not a mystery. Switched `fly.toml`'s `primary_region`.
+3. **`shared-cpu-2x` genuinely couldn't keep up under concurrent load.**
+   Even after the image built cleanly (432MB, confirming the torch fix),
+   the deployed worker got stuck in an endless kill-and-retry loop:
+   `initialize_process_timeout` (10s default) kept expiring mid-import,
+   `"worker is at full capacity"` fired at `load=1.3` against a `0.7`
+   threshold. Two stale browser tabs left open from earlier testing were
+   both triggering simultaneous cold dispatches, doubling the real
+   contention — closed them before continuing, to stop testing against a
+   self-inflicted worst case. Raised `initialize_process_timeout` to 30s
+   first (cheap to try) via a new `WORKER_INITIALIZE_TIMEOUT` config value —
+   it still timed out, proving this wasn't just "needs a bigger number."
+   Escalated to `performance-2x`/4GB (dedicated vCPUs, not shared/throttled)
+   as the more expensive but more honest fix.
+4. **The actual dominant cost was never CPU at all.** Even on dedicated
+   CPU, cold starts were still slow and intermittently timing out. Read the
+   log timeline closely instead of assuming the CPU upgrade alone would
+   fix it: `SentenceTransformer(...)`'s constructor was hitting Hugging
+   Face Hub over the network on *every* cold job-runner start —
+   `"unauthenticated requests to the HF Hub"` on every single init, and a
+   measured ~19-second gap between "loading model" and "loading weights"
+   that had nothing to do with the weights themselves (which load in under
+   a second once local). This is a variant of the exact same class of bug
+   Phase 3's `_prewarm` hook was built to solve for the in-process case —
+   just one layer further out, at the per-subprocess Docker cold-start
+   layer, where `_prewarm`'s in-memory warm cache doesn't reach. Fixed
+   properly: baked the model into `agent/Dockerfile` at build time
+   (`SentenceTransformer('BAAI/bge-small-en-v1.5')` as a `RUN` step, same
+   pattern already used for Silero VAD via `download-files`) and set
+   `HF_HUB_OFFLINE=1` so runtime never re-attempts the network call at all.
+   Real init time dropped to ~20s, well inside the 30s timeout, with zero
+   HF Hub warnings in the logs afterward — confirmed on a live redeploy,
+   not assumed from the fix's plausibility.
+- Removed the now-genuinely-redundant `uv pip install torch --index-url
+  ...` line the Dockerfile had carried since problem #1's *first* (wrong)
+  fix attempt — the lockfile pin makes it a guaranteed no-op now.
+  Redeployed once more after removing it specifically to confirm no
+  regression, rather than assuming a cleanup commit is risk-free.
+- Final live end-to-end verification, same standard as the original
+  deployment entry: opened the real production URL
+  (`https://ai-digital-twin-blue.vercel.app`) in a fresh browser tab,
+  watched `Connecting…` → `Speaking…`, read the actual greeting text, zero
+  console errors — and confirmed via `flyctl logs` that this was genuinely
+  served by the Fly.io worker (`region: "India South"` LiveKit-side,
+  `region: sin` Fly-side), not a leftover local process (which was
+  deliberately stopped and confirmed dead via `curl` against `:8081`
+  returning connection-refused).
+
+**Why**
+
+Every one of these four problems looked, at first glance, like it could be
+explained by the previous one's fix not being "enough" — more memory, more
+CPU, a longer timeout. The discipline that actually closed each one was the
+same throughout: read the real log line, the real timestamp gap, the real
+resolved dependency source, before reaching for the next lever. Problem #4
+in particular would have been easy to mis-diagnose forever as "needs an
+even bigger VM" if the ~19-second gap between two specific log lines hadn't
+been read closely enough to notice it was a network wait, not compute.
+
+**Decisions made**
+
+- Worker VM sized at `performance-2x`/4GB (dedicated CPU) permanently, not
+  `shared-cpu-2x` — this has real ongoing Fly.io billing cost, unlike the
+  free-tier-first stance the rest of this project has held; flagged
+  explicitly rather than left implicit, since it's a genuine scope
+  exception to `CLAUDE.md`'s "everything free tier" framing, matching
+  `DEPLOYMENT.md`'s own "a few dollars to avoid failing evaluation is
+  rational" guidance.
+- `HF_HUB_OFFLINE=1` is now a permanent runtime setting for the worker
+  image — baked into the Dockerfile itself, not left as a Fly secret,
+  since it's a build-time-coupled decision (the model has to already be in
+  the image for offline mode to work at all).
+- The local-laptop worker process is fully retired, not kept as a fallback
+  — `docs/DEPLOYMENT.md` Sec7's own contingency table still lists "run the
+  worker locally" as the demo-day fallback if the hosted worker dies, so
+  this isn't lost, just no longer the primary path.
+
+**Verification**
+
+- Every fix in this entry was confirmed against a real redeploy and real
+  log output, not inferred from the fix's own plausibility — including the
+  two attempts that *didn't* work (the first two torch source-pin tries,
+  the 30s-timeout-alone try), which are recorded here specifically because
+  a journal that only shows the fix that worked hides the actual debugging
+  path.
+- Final state confirmed via `flyctl status` (machine `started`, dedicated
+  CPU, 4096MB), `flyctl logs` (clean `registered worker`, no timeout, no HF
+  Hub warning), and a live browser session against the real production URL
+  showing a full greeting with zero console errors.
+- Scanned every diff for secret-shaped strings before staging — none found;
+  Fly secrets were set via `flyctl secrets import` reading from a temp file
+  that was deleted immediately after, never echoed into any tool output.
+- Committed as `dd79f08` (torch CPU pin), `d151998` (Dockerfile + fly.toml),
+  `1f12dac` (Dockerfile cleanup), `935c771` (timeout config) — each a
+  separate work commit per protocol.
