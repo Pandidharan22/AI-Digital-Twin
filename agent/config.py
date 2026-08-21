@@ -78,3 +78,16 @@ OWNER_NAME = os.environ["OWNER_NAME"]
 # for one local visitor at a time; raise this via env var once the worker
 # runs on real server hardware (Fly.io) instead of a laptop.
 WORKER_NUM_IDLE_PROCESSES = int(os.environ.get("WORKER_NUM_IDLE_PROCESSES", 2))
+
+# AgentServer's initialize_process_timeout defaults to 10.0s -- too tight
+# for a job-runner process to import torch + sentence-transformers +
+# scipy/sklearn (heavy C-extension loading). Confirmed live on Fly.io
+# (2026-08-21) via a real kill-and-retry loop that never finished: the
+# actual dominant cost turned out to be SentenceTransformer's constructor
+# hitting Hugging Face Hub over the network on every cold start (~19s,
+# unauthenticated so slow/rate-limited), not CPU work -- fixed properly by
+# baking the model into agent/Dockerfile and setting HF_HUB_OFFLINE=1, which
+# brought real init time down to ~20s. This timeout is raised as headroom on
+# top of that fix, not a substitute for it -- a genuinely hung process still
+# gets killed and retried.
+WORKER_INITIALIZE_TIMEOUT = float(os.environ.get("WORKER_INITIALIZE_TIMEOUT", 30.0))

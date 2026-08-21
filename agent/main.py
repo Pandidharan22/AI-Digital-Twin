@@ -51,7 +51,11 @@ def _prewarm(proc: JobProcess) -> None:
 # CLI auto-discovery (livekit/agents/cli/discover.py) requires this exact
 # variable name -- app, server, or agent, in that priority order. See
 # docs/SDK_NOTES.md Sec4.
-server = AgentServer(setup_fnc=_prewarm, num_idle_processes=config.WORKER_NUM_IDLE_PROCESSES)
+server = AgentServer(
+    setup_fnc=_prewarm,
+    num_idle_processes=config.WORKER_NUM_IDLE_PROCESSES,
+    initialize_process_timeout=config.WORKER_INITIALIZE_TIMEOUT,
+)
 
 
 # No agent_name: a non-empty agent_name switches on "explicit dispatch," where
