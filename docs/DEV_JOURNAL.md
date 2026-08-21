@@ -3109,3 +3109,124 @@ visible, not a missing feature.
 - Scanned the diff for secret-shaped strings before staging — none found.
 - Committed as `c94eb15`, work only, **not pushed** per explicit instruction
   — owner wants to review locally first.
+
+---
+
+## 2026-08-21 — Phase 3/4: "Introduce yourself" retrieval gap, top_k=5, citation doc-type labels
+
+**What happened**
+
+- Owner tried the redesigned UI locally, approved it (pushed `c94eb15` and
+  `084b0be`), then flagged a real correctness bug seen live: asking "Can you
+  introduce yourself?" got the refusal line — "That is not something I have
+  documented" — even though the resume obviously has exactly the right
+  content for that question.
+- **Diagnosed before fixing**, per `CLAUDE.md`'s working-style rule. Queried
+  `agent.retrieval._match_sync` directly for five introduction-style
+  phrasings ("introduce yourself", "Can you introduce yourself?", "Tell me
+  about yourself", "Who are you", "give me an overview of your background")
+  — none of them surfaced the resume's `Objective` section (a genuine
+  first-person-style professional summary) in the top results at all; the
+  slot kept going to unrelated `Job-Hunt-AI` README chunks instead. Computed
+  the actual cosine similarity between each query's embedding and the
+  `Objective` chunk's stored embedding directly (fetched via `supabase-py`)
+  to rule out a retrieval-pipeline bug: the `Objective` chunk scores
+  **0.40–0.47** against every introduction-style phrasing tested, while the
+  `Job-Hunt-AI` chunks that won the slot score **0.56–0.59** — both real
+  numbers, not estimated. This confirmed the LLM's tool call and the
+  no-match refusal logic were both working exactly as designed: it called
+  `search_my_background`, got back a real `match` (a `Job-Hunt-AI` doc
+  chunk), and correctly declined to answer from it since that chunk isn't
+  actually about the owner — the bug is `bge-small-en-v1.5` having weak
+  lexical/semantic overlap between meta-conversational phrasing ("introduce
+  yourself") and third-person professional-bio text, the same category of
+  embedding weakness as the earlier A1 freelance-role gap, just triggered by
+  a different query shape.
+- Confirmed the fix direction before writing it: a keyword-rich
+  reformulation, "AI software engineer objective summary of skills and
+  experience," scores **0.822** against the same `Objective` chunk and
+  returns it as a clean top-1 (next-closest result 0.786) — an 0.35+ point
+  swing from the literal phrasing.
+- Added rule 1a to `agent/prompts/system_prompt.md`: for introduction/"who
+  are you" style questions, the LLM is told this is still a factual question
+  about the owner (the twin *is* the owner), and to call
+  `search_my_background` with descriptive resume-language keywords rather
+  than echoing the visitor's literal words. Same fix strategy as the earlier
+  A1 gap (query-phrasing layer, not the embedding model or the threshold) —
+  now applied at the prompt level so the LLM does the rephrasing itself for
+  this whole class of question, rather than a single hardcoded UI chip swap
+  covering only one specific wording.
+- Bumped `RETRIEVAL_TOP_K` 4 → 5 (`.env`, `.env.example`,
+  `docs/DEPLOYMENT.md`) per explicit owner request — a ceiling on sources
+  shown per turn, not a floor; a turn with only one chunk above threshold
+  still shows just one.
+- **Citation labeling.** Owner also asked citations to say what kind of
+  document a source came from (their example: "Education Section - Resume"),
+  not just show the raw section heading, and confirmed the resume case
+  should keep showing its section. Queried the live `chunks` table directly
+  rather than assuming, and confirmed the ingestion pipeline only ever
+  produces three `source_type` values: `resume`, `context`, `github_repo` —
+  there's no PRD/SRS/program-file-level distinction to surface yet, since
+  `ingestion/loaders/github_loader.py` only ever ingests each repo's
+  `README.md` (confirmed by reading the loader directly, not assumed from
+  memory). Added `describeSource()` to `CitationsPanel.tsx`: `resume` →
+  section heading + "Resume" subtitle; `context` → section heading +
+  "Notes (context.md)" subtitle; `github_repo` → strips the redundant
+  `"<repo> — "` prefix `_split_readme` bakes into every section heading
+  (confirmed live: `"Job-Hunt-AI — Documentation"` → `"Documentation"`) and
+  shows `"<repo> — README.md"` as the subtitle, which is an accurate claim
+  given today's ingestion scope rather than an overclaim of file-level
+  granularity the pipeline doesn't actually have.
+- Restarted the local worker process to pick up both the new system prompt
+  and the `.env` change — found via `ps -W` that the tool's default PID
+  column is a Cygwin-internal id, not the real Windows PID; had to use the
+  `WINPID` column (`ps -W -l`) to actually kill the right process after a
+  first `taskkill` reported "process not found" against the wrong number.
+
+**Why**
+
+Diagnosing before fixing here mattered because the visible symptom (a
+refusal) and the actual defect (a bad retrieval match one layer down) point
+in opposite directions — patching the refusal-handling logic would have
+been treating the symptom. Computing the real cosine similarity numbers,
+not just re-running `_match_sync` and eyeballing which chunk won, is what
+turned "the retrieval seems off" into a specific, quantified claim (0.40–0.47
+vs. 0.56–0.59, a real gap) that a rephrased query could be tested against
+and verified to close.
+
+**Decisions made**
+
+- Introduction-style query rephrasing lives in the system prompt (an LLM
+  instruction), not as a special-cased string match in `retrieval.py` or a
+  hardcoded UI-only substitution — the earlier A1 fix (swapping the
+  suggested-question chip's wording) only helped that one exact chip;
+  this fixes the underlying behavior for any phrasing of the same intent
+  the LLM chooses to rephrase, both from an actual spoken question and the
+  UI's own suggested chip.
+- Citation subtitles for `github_repo` sources say "README.md" explicitly
+  rather than a vaguer "GitHub" label, since that's the literal, verifiable
+  truth of what's ingested today — if ingestion ever expands to pull
+  additional files per repo, this label becomes the first thing that needs
+  revisiting, not silently stale.
+
+**Verification**
+
+- Real cosine-similarity numbers computed directly against the stored
+  `Objective` chunk embedding for both the failing and the fixed query
+  phrasings — not inferred from top-4 ranking alone.
+- Worker restarted and re-registered with LiveKit Cloud after the prompt/env
+  change (confirmed via the `"registered worker"` log line reappearing);
+  `_match_sync` re-run post-restart to confirm `RETRIEVAL_TOP_K=5` is live
+  (5 results returned where 4 returned before).
+- Citation labeling verified live, not just read from the diff: published a
+  5-source test payload (2 resume, 1 context, 2 github_repo with real GitHub
+  URLs) directly into the running local room via
+  `livekit.api.LiveKitAPI().room.send_data(...)`, then read the rendered
+  accessibility tree — confirmed all 5 chips rendered, both `github_repo`
+  chips had the duplicate repo-name prefix correctly stripped from their
+  section label, and both carried real, correct GitHub URLs as links.
+- `npm run build` — clean, zero type errors.
+- `read_console_messages` (errors only) — none.
+- Scanned both diffs for secret-shaped strings before staging — none found.
+- Committed as `1ad5eaf` (prompt/config fix) and `10f8a2c` (citation
+  labeling), each separate from this journal entry per protocol.
