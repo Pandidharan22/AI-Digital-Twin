@@ -16,5 +16,24 @@ dependencies = [
     "sentence-transformers>=6.0.0",
     "supabase>=2.31.0",
     "tiktoken>=0.14.0",
+    "torch>=2.2",
     "uvicorn[standard]>=0.38.0",
 ]
+
+# torch is a transitive dependency of sentence-transformers, used here only
+# for local CPU inference of bge-small-en-v1.5 (384 dims -- see CLAUDE.md's
+# stack table). Without this, `uv sync` on Linux resolves PyPI's default
+# CUDA-enabled torch wheel and its full nvidia-* dependency chain
+# (nvidia-cublas, nvidia-cudnn, nvidia-cusolver, etc. -- 2.5GB+ combined,
+# confirmed live while building agent/Dockerfile, 2026-08-21), none of which
+# this project ever uses or has a GPU to run. Pinning to PyTorch's own
+# CPU-only index applies to every platform uv resolves for, including local
+# Windows dev (unaffected in practice -- Windows already resolved a CPU-only
+# wheel from the default index).
+[tool.uv.sources]
+torch = { index = "pytorch-cpu" }
+
+[[tool.uv.index]]
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
+explicit = true
