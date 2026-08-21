@@ -250,6 +250,32 @@ hybrid search (added the same day) fixes. Kept as two clearly separated concerns
 `match_chunks`'s implementation: the threshold still gates eligibility alone, unweakened;
 hybrid ranking only reorders among already-eligible candidates.
 
+**Amendment (2026-08-21, Phase 3 Day 4) — `RETRIEVAL_THRESHOLD` raised to 0.55, and
+the "noise ceiling" claim above corrected.** Phase 2's 0.5 was set against a single
+out-of-scope probe (pizza topping, ~0.46 similarity). Built `ingestion/tune_threshold.py`
+to sweep the full `TEST_PLAN.md` Suite A (13 real in-corpus questions) and Suite B (7
+out-of-scope questions) against the live corpus at eight threshold values (0.35–0.70).
+Real out-of-scope similarity turned out to reach as high as 0.61 for some queries — the
+"~0.46 ceiling" above was a real measurement, just of only one query, not representative
+of the actual noise floor.
+
+More importantly, the sweep disproved this ADR's implicit assumption that a clean
+separating threshold exists at all: at 0.50, 4 of 7 Suite B queries returned results
+(false accepts); reaching zero false accepts required 0.65, which cost 6 of 13 Suite A
+matches (11/13 → 7/13) — an unacceptable trade given Suite A questions are literally
+what a real visitor asks. **0.55 was chosen as a deliberate balance, not a threshold that
+achieves clean separation**: 9/13 Suite A, 1/7 Suite B false accepts (one anomaly —
+"what's your salary expectation?" scoring 0.61 against an unrelated GitHub README about
+a *Loan Eligibility* API, pure vocabulary-proximity noise the prompt contract's rules
+2–4 should catch even though the threshold gate doesn't). This ADR's original framing —
+"a poorly tuned threshold causes false refusals" — undersold the real risk: for this
+corpus and embedding model, *no* tuning eliminates both failure classes simultaneously;
+threshold choice is a real trade-off between them, not a dial with a correct setting to
+find. See `docs/TEST_PLAN.md` §2 for the full sweep table and `docs/DEV_JOURNAL.md`'s
+2026-08-21 entry for the complete reasoning, including a separate, deferred finding (a
+pre-existing retrieval-ranking gap on "What's your most recent role?", independent of
+threshold choice).
+
 ---
 
 ### ADR-005 — Citations published before generation, rendered not spoken

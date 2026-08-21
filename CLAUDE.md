@@ -143,28 +143,39 @@ Read the relevant doc **before** implementing:
 - [ ] Phase 5 — Deployment
 - [ ] Phase 6 — Testing and submission
 
-**Now working on:** Ready to start Phase 3 (grounding and citations) — the graded
-feature. Corpus is live in Supabase: 51 chunks (resume, `context.md`, 6 curated GitHub
-repos) via `ingestion/ingest.py`, re-runnable and idempotent (`uv run python -m
-ingestion.ingest`). All Phase 2 `BUILD_PLAN.md` exit criteria pass, verified with
-`uv run python -m ingestion.validate`: chunk count in range, no floor/ceiling
-violations, no duplicate hashes, all 5 spot-checks return the correct top chunk, the
-out-of-scope refusal check passes. Retrieval is **hybrid** (dense cosine similarity for
-eligibility/threshold-gating + Postgres full-text keyword ranking for ordering among
-eligible candidates via Reciprocal Rank Fusion) — added mid-phase after a real spot-
-check failure, see `docs/DEV_JOURNAL.md`'s 2026-08-18 validation entry. `match_chunks`
-now takes `query_embedding` **and** `query_text`; Phase 3's `retrieval.py` should call
-it with both from the start.
-**Blocked by:** Nothing functionally. Four things worth attention when they become
-relevant: (1)/(2) the Phase 1 latency (LLM TTFT ~2.5s avg, one 7s spike) and barge-in
-timing (~455ms) numbers are still open, unchanged since Phase 1 — revisit once Phase
-3's real system prompt exists; (3) `RETRIEVAL_THRESHOLD=0.5` is empirically grounded
-against real out-of-scope scores for this corpus, but is explicitly interim — final
-tuning happens in Phase 3 against the full 20-question `TEST_PLAN.md` suite; (4)
-`bge-small-en-v1.5` has a real, demonstrated weakness anchoring on short acronyms/
-numbers inside longer passages (the CGPA spot-check) — hybrid search compensates for
-this specific case, but a differently-phrased factual query could still expose the same
-underlying weakness; worth keeping in mind when writing Phase 3's test questions.
+**Now working on:** Phase 3 Day 4, mid-flight. Days 1–3 done: `agent/retrieval.py`
+(embed + hybrid pgvector search + threshold gate), `agent/twin_agent.py` (`TwinAgent`
+with the real `search_my_background` tool), `agent/citations.py` (publishes before
+generation, per ADR-005), the real `agent/prompts/system_prompt.md`, and
+`agent/main.py` wired to all of it — all live-voice-tested via LiveKit Cloud's Agent
+Console (no custom frontend yet). Two real bugs found and fixed via live testing:
+FR-7.2's spoken fallback on exhausted LLM retries (`session.on("error")` in
+`main.py`), and a 13.79s cold-start latency spike on the first grounded turn per job
+process, fixed with a `setup_fnc` prewarm hook (`agent/main.py`'s `_prewarm`). Switched
+`GEMINI_MODEL` from the `gemini-flash-latest` alias (drifted to a 5 RPM model with no
+warning) to the pinned `gemini-3.5-flash-lite` (verified ≥15 RPM live). Day 4's
+threshold tuning is done: `RETRIEVAL_THRESHOLD` is now **0.55** (up from 0.5), tuned via
+the new `ingestion/tune_threshold.py` against a real 13-question Suite A + the full
+Suite B — see `docs/ARCHITECTURE.md` ADR-004's 2026-08-21 amendment for why no
+threshold cleanly separates both failure classes for this corpus.
+Still open in Day 4: the Token Service (`api/main.py`, currently a docstring stub) and
+a minimal frontend (`web/`, currently empty) with a citations listener + source cards
+— both approved via a plan (`docs/BUILD_PLAN.md`'s Day 4 assumed a frontend already
+existed; it doesn't, so this is new scope, deliberately minimal, full UX polish stays
+Phase 4).
+**Blocked by:** Nothing functionally. Open items: (1)/(2) the Phase 1 latency (LLM
+TTFT ~2.5s avg, one 7s spike) and barge-in timing (~455ms) numbers are still
+unrevisited since Phase 1; (3) **new, deferred to Phase 6:** "What's your most recent
+role?" — `CITATION_SPEC.md` §7's first suggested demo question — fails to retrieve the
+Freelance experience chunk in the top-4 at every threshold tested (0.50–0.65); it's a
+retrieval-ranking gap, not a threshold problem, and needs its own investigation before
+submission. See `docs/TEST_PLAN.md` Suite A's A1 note and `docs/DEV_JOURNAL.md`'s
+2026-08-21 threshold-tuning entry; (4) `bge-small-en-v1.5` has a real, demonstrated
+weakness anchoring on short acronyms/numbers inside longer passages (the CGPA
+spot-check) — hybrid search compensates for that specific case, but the threshold
+sweep also surfaced a *different* weakness class: coincidental vocabulary-proximity
+false positives (e.g. "salary" vs. an unrelated Loan-Eligibility-API README) that
+threshold tuning alone can't fully separate from real matches.
 **Decisions made this session:** GitHub content ingests via plain REST + PAT, not an
 MCP client — walked through the real trade-offs with the owner before choosing; see
 `ARCHITECTURE.md` ADR-002/ADR-003 amendments. GitHub ingestion is curated to 6 repos

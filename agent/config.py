@@ -56,11 +56,13 @@ GEMINI_MODEL = os.environ.get("GEMINI_MODEL", "gemini-3.5-flash-lite")
 SUPABASE_URL = os.environ["SUPABASE_URL"]
 SUPABASE_SERVICE_KEY = os.environ["SUPABASE_SERVICE_KEY"]
 
-# Retrieval tuning -- ADR-004's anti-hallucination gate. 0.5 empirically set in
-# Phase 2 against this corpus's real out-of-scope similarity scores (see
-# docs/ARCHITECTURE.md ADR-004 Outcome); still interim pending Phase 3 tuning
-# against the full docs/TEST_PLAN.md question set.
-RETRIEVAL_THRESHOLD = float(os.environ.get("RETRIEVAL_THRESHOLD", 0.5))
+# Retrieval tuning -- ADR-004's anti-hallucination gate. 0.55 tuned in Phase 3
+# Day 4 against the full TEST_PLAN.md Suite A/B set via
+# ingestion/tune_threshold.py (see docs/ARCHITECTURE.md ADR-004 Outcome and
+# docs/DEV_JOURNAL.md's 2026-08-21 entry) -- a deliberate balance, not a
+# perfect separation: no threshold in the sweep eliminated every Suite B
+# false accept without costing real Suite A recall.
+RETRIEVAL_THRESHOLD = float(os.environ.get("RETRIEVAL_THRESHOLD", 0.55))
 RETRIEVAL_TOP_K = int(os.environ.get("RETRIEVAL_TOP_K", 4))
 
 # Identity -- substituted into the system prompt (CITATION_SPEC.md Sec5).
