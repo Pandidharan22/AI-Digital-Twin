@@ -2686,3 +2686,178 @@ distinguishes them.
 - Scanned the diff for secret-shaped strings before staging — none found.
 - Committed as `f5094e4`, work only — this journal entry is the separate commit
   that follows it, per `CLAUDE.md`'s log-then-commit sequence.
+
+---
+
+## 2026-08-21 — Phase 4: Agent status, mic permission notice, suggested questions
+
+**What happened**
+
+- Added three small components to `web/`, covering three of `BUILD_PLAN.md`
+  Phase 4's five prioritized items:
+  - `AgentStatus.tsx` — `@livekit/components-react`'s `useVoiceAssistant()` hook
+    (already installed at `2.9.24`, no new dependency) exposes the agent
+    participant's own state machine directly:
+    `disconnected → connecting → pre-connect-buffering → initializing →
+    idle/listening/thinking/speaking`, plus a `failed` terminal state. Mapped
+    each to a short human label and a colored status dot (idle/listening
+    green, thinking/speaking pulsing amber/blue, failed/disconnected red).
+    `initializing` gets its own explicit "waking up the agent — this can take
+    a few seconds" label rather than reusing "connecting", specifically
+    because `DEPLOYMENT.md` Sec4 calls out that exact gap — a visitor staring
+    at silence with no indicator during a cold start — as the single most
+    common way a working project reads as broken during evaluation. FR-5.2.
+  - `MicPermissionNotice.tsx` — explains mic access *before* the visitor
+    clicks the toggle ("nothing is recorded until you do"), then listens for
+    `RoomEvent.MediaDevicesError` on the room (via `useRoomContext()`) to swap
+    in a specific denied-state message pointing at the browser's own
+    site-permission UI, rather than a generic failure. Since the `LiveKitRoom`
+    `audio` prop was already removed in an earlier session specifically so mic
+    access stays opt-in (see this file's 2026-08-21 citations-panel entry),
+    this listener only ever fires from an explicit, visitor-initiated request
+    — never an automatic one the visitor didn't ask for.
+  - `SuggestedQuestions.tsx` — the four `CITATION_SPEC.md` §7 demo questions,
+    displayed as read-and-ask-aloud text (this is a voice agent with no text
+    input path, so there's nothing to "click to send"). FR-5.4.
+- **Swapped the first suggested question.** §7's literal first question,
+  "What's your most recent role?", is `TEST_PLAN.md`'s own documented A1
+  known gap — confirmed still broken by directly re-running
+  `agent.retrieval._match_sync` against the live corpus before touching any
+  UI code: it still surfaces three unrelated JobHunt-AI chunks as its top
+  results, with the correct Freelance resume chunk absent from the top-4.
+  Tested four alternate phrasings the same way; `TEST_PLAN.md`'s own A2
+  wording ("What did you work on at your freelance role?") retrieved the
+  correct chunk as the clear top-1 result (0.687 similarity vs. the next
+  result's 0.631), so that's the phrasing now shown as the first suggested
+  question — same underlying demo intent (recent work), a chip that actually
+  works. The other three questions are used verbatim from §7.
+- Verified the whole thing live, not just built: started the token API, the
+  real agent worker (via the correct `python -m livekit.agents start
+  agent/main.py` invocation — worth noting since a first attempt using
+  `python -m agent.main dev` silently no-op'd and exited immediately, because
+  `agent/main.py` has no `__main__` block; that pattern belongs to the
+  deprecated `cli.run_app` entrypoint this project explicitly doesn't use, per
+  `docs/SDK_NOTES.md`), and the Vite dev server, then loaded the page in a
+  real browser. Confirmed via `get_page_text` and a console-error check: the
+  agent connected, greeted, and the status pill correctly showed "Speaking…"
+  while it did; the mic explainer, all four suggested questions, and the
+  empty-state sources panel all rendered with zero console errors.
+
+**Why**
+
+`BUILD_PLAN.md` Phase 4 explicitly ranks connection states as "highest value
+... silence with no indicator reads as broken," which is the same principle
+`DEPLOYMENT.md` restates for the specific case of a cold start. Doing the
+alternate-phrasing check live, the same way the original A1 gap was
+discovered (`docs/TEST_PLAN.md`'s 2026-08-21 note), rather than assuming a
+rewritten question would obviously work, matched this project's standing
+instinct that a plausible-sounding fix and a verified one are not the same
+claim.
+
+**Decisions made**
+
+- The first suggested-question chip permanently uses `TEST_PLAN.md`'s A2
+  phrasing instead of `CITATION_SPEC.md` §7's literal A1 wording, until the
+  underlying retrieval-ranking gap itself is fixed (still open, still
+  deferred per `CLAUDE.md`'s current-status tracking) — a UI wording choice,
+  not a §7 spec change, so §7 itself is left as written.
+- Transcript panel (FR-5.1) and mobile layout (Phase 4 item 6) are not done
+  yet — correctly still open, not silently skipped.
+
+**Verification**
+
+- `npm run build` (`tsc -b && vite build`) — clean, zero type errors.
+- Live end-to-end run against the real deployed LiveKit Cloud worker (not a
+  mock), the real token API, and the real corpus in Supabase — confirmed via
+  `get_page_text` and `read_console_messages` (zero errors), not assumed from
+  a successful build alone.
+- `_match_sync` re-run directly against live retrieval for the original A1
+  phrasing (confirmed still broken) and four candidate replacements before
+  picking one, rather than trusting the `TEST_PLAN.md` note's age.
+- Scanned the diff for secret-shaped strings before staging — none found.
+- Committed as `63c9747`, work only.
+
+---
+
+## 2026-08-21 — Phase 5: Token Service deployment prep
+
+**What happened**
+
+- Added `api/requirements.txt`, a minimal, independently-pinned dependency
+  list for the Token Service alone: `fastapi`, `uvicorn[standard]`,
+  `livekit-api`, `python-dotenv`, `pydantic`. This exists because the
+  project's single `pyproject.toml` is shared across `agent/`, `ingestion/`,
+  and `api/`, and pulls in `sentence-transformers`/`torch` (100+ MB) for the
+  embedding model — none of which the Token Service touches. Deploying the
+  Token Service from the full `pyproject.toml` would work, but would make
+  every build on the host pull and resolve a dependency tree the service
+  never imports, for no benefit. Versions pinned to exactly what
+  `uv pip show` reports installed and already verified working locally, not
+  guessed.
+- Changed `api/config.py`'s `FRONTEND_ORIGIN` (singular, one hardcoded
+  string) to `FRONTEND_ORIGINS` (plural, parsed from a comma-separated env
+  var) and updated `api/main.py`'s CORS middleware to pass the whole list to
+  `allow_origins`. Reasoning: without this, switching the env var to the
+  production Vercel origin would break local dev's `localhost:5173` origin,
+  and switching back would break production — a single-value config forces
+  picking one environment to leave broken at any given time. A
+  comma-separated list lets both work simultaneously from one env var.
+- Wrote `render.yaml`, a Render Blueprint, so deploying the Token Service is
+  "point Render at this repo" rather than manually re-typing the build
+  command, start command, and env var names into Render's dashboard by hand
+  where a typo silently produces a confusing runtime failure. Specifies the
+  free plan, `pip install -r api/requirements.txt` as the build command,
+  `uvicorn api.main:app --host 0.0.0.0 --port $PORT` as the start command
+  (Render assigns `$PORT` at runtime; hardcoding a port number is a common
+  mistake that makes the health check fail), `/health` as the health check
+  path, and the four required env vars (`LIVEKIT_URL`, `LIVEKIT_API_KEY`,
+  `LIVEKIT_API_SECRET`, `FRONTEND_ORIGIN`) marked `sync: false` so Render
+  prompts for each value in its own dashboard rather than storing a default
+  or expecting it in the repo.
+- Confirmed the GitHub repo (`Pandidharan22/AI-Digital-Twin`) is public via
+  an unauthenticated `GET` against the GitHub API (`200`, not `404`) — one of
+  `DEPLOYMENT.md`'s pre-submission checklist items, verified now rather than
+  assumed, since both Render's and Vercel's GitHub-connected deploy flows
+  need it.
+
+**Why**
+
+Deployment topology decisions made under time pressure are exactly the kind
+that are easy to get subtly wrong in a way that only surfaces once a real
+external host tries to build the project — a slow/bloated build, a CORS
+origin that locks out either dev or prod, a hardcoded port that fails a
+health check. Working through each of those now, with the actual verified
+package versions and the actual `$PORT` mechanism rather than an assumed one,
+is the same "run things, don't say this should work" discipline
+`CLAUDE.md` states for application code, applied to deployment config before
+a host ever sees it.
+
+**Decisions made**
+
+- The Token Service deploys from its own minimal `requirements.txt`, not the
+  shared `pyproject.toml`/`uv.lock` — permanent for this service, not a
+  temporary shortcut. If its dependencies ever drift from what's actually
+  imported in `api/`, `requirements.txt` needs updating by hand; there's no
+  automated sync between it and `pyproject.toml`.
+- CORS origins are configured as a comma-separated env var permanently, not
+  reverted to single-origin once deployment stabilizes.
+- The agent worker deploys by running on the owner's own machine for
+  tonight's submission rather than to Fly.io, per `docs/DEPLOYMENT.md` Sec2's
+  own sanctioned fallback ("runs fine from your laptop for a live demo") —
+  Fly.io's account/card verification and first-build time for this project's
+  heavy dependency tree were judged too large a risk against tonight's
+  deadline. Flagged here as a real, deliberate scope trade, to be revisited
+  once there's time to spare, not a permanent architecture decision.
+
+**Verification**
+
+- `uv pip show` cross-checked against every version pinned in
+  `api/requirements.txt` — exact match, not approximated.
+- Local `curl` against `/health` and `/token` after the CORS change — both
+  still return correctly, `access-control-allow-origin` reflecting the
+  request's origin.
+- `GET https://api.github.com/repos/Pandidharan22/AI-Digital-Twin` →
+  `200`, confirming public visibility.
+- Scanned the diff for secret-shaped strings before staging — none found
+  (`render.yaml`'s env var entries are keys only, `sync: false`, no values).
+- Committed as `51a7eb8`, work only.
