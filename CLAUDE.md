@@ -140,8 +140,8 @@ Read the relevant doc **before** implementing:
 - [x] Phase 2 — Corpus and ingestion
 - [x] Phase 3 — Grounding and citations (core build + Suite C voice run done;
       20-turn latency measurement still open)
-- [ ] Phase 4 — UX (connection states, mic flow, suggested questions done;
-      transcript panel and mobile polish still open)
+- [ ] Phase 4 — UX (connection states, mic flow, suggested questions, and the
+      transcript panel are done; mobile polish still open)
 - [ ] Phase 5 — Deployment (first live deployment done and verified; several
       hardening items still open — see below)
 - [ ] Phase 6 — Testing and submission
@@ -159,8 +159,10 @@ via `useVoiceAssistant()`), `MicPermissionNotice.tsx` (explainer + a
 `mediaDevicesError`-driven denied-state message), and `SuggestedQuestions.tsx`
 (FR-5.4, `CITATION_SPEC.md` §7's four demo questions — with question 1 swapped
 to `TEST_PLAN.md`'s A2 phrasing since A1's literal wording is the known
-retrieval-ranking gap noted below). Still open: the transcript panel (FR-5.1)
-and mobile responsive layout.
+retrieval-ranking gap noted below). `TranscriptPanel.tsx` (FR-5.1) is also
+done, using `@livekit/components-react`'s own `useTranscriptions()` hook —
+the same mechanism behind LiveKit's Agent Console transcript view, no
+agent-side changes needed. Still open: mobile responsive layout.
 
 **Phase 5, first live deployment is up and verified end-to-end**
 (2026-08-21): Token Service on Render
