@@ -2104,3 +2104,101 @@ that was worth establishing rather than assuming.
   not separable steps. `.env` itself is gitignored per `CLAUDE.md` rule 1 and was
   updated locally only. This journal entry follows as the separate commit, per
   `CLAUDE.md`'s log-then-commit sequence.
+
+---
+
+## 2026-08-21 — Phase 3: fixed a 13.79s cold-start latency spike with a prewarm hook
+
+**What happened**
+
+- A second live voice test (after the model switch) felt noticeably faster overall,
+  but the owner reported "still felt a lag once." Asked to check the log before
+  moving to Day 4 rather than assume it was nothing.
+- The log confirmed a real, deterministic problem, not noise: turn 2 ("Introduce
+  yourself in short.") — the conversation's *first* grounded (tool-calling)
+  question — had `e2e_latency=13.79s`. Turns 3 and 4, also grounded, same session,
+  same tool: `4.56s` and `4.18s`. Same code path, 3x slower on the first hit.
+- Root cause, read directly from the log rather than guessed: LiveKit spawns a
+  fresh OS process per room for isolation (visible as "initializing job runner"
+  right when each job dispatches). Inside that fresh process, `retrieval.py`'s
+  `_client()` (a `@lru_cache`d `supabase.create_client`) and `embedder.py`'s
+  `_model()` (a `@lru_cache`d `SentenceTransformer`) are both lazily constructed on
+  first call. The log shows exactly this happening mid-turn: `"No device provided,
+  using cpu"` → `"Loading SentenceTransformer model from BAAI/bge-small-en-v1.5."`
+  fired right after `agent_state: listening -> thinking` on turn 2, and never again
+  in that session — because the `lru_cache` kept the loaded model resident for
+  turns 3 and 4, which is exactly why only the *first* grounded turn paid the cost.
+- Fix: `AgentServer` accepts a `setup_fnc` (LiveKit's standard hook for exactly this
+  class of problem — the framework's own examples use it to preload VAD models),
+  which runs once per job-runner process *before* that process accepts any room.
+  Added `agent/main.py`'s `_prewarm(proc)`, which calls `retrieval.py`'s own
+  `_match_sync("warmup")` — the real embed-plus-RPC code path a live query takes,
+  not a reimplementation of it — so both lazy singletons get populated at worker
+  startup instead of on a visitor's turn.
+- Verified live by restarting the worker and reading its own `worker.log`
+  (redirected via PowerShell `tee` for this run, at the owner's suggestion, so the
+  full session log could be read directly instead of pasted by hand): the first
+  batch of idle job-runner processes each logged `elapsed_time: 8.21`–`8.24` on
+  `"job runner initialized"` — that's the prewarm cost, now paid at worker launch,
+  before `"registered worker"` even fires. Every idle-pool process spawned *after*
+  that first batch initialized in `0.3`–`0.8s`, benefiting from an already-warm OS
+  file cache for the model weights. In the actual conversation that followed: the
+  greeting was unaffected (`llm_ttft=1.06s`, no tool call), and the first grounded
+  question — "What are you currently working on?" — landed at `e2e_latency=2.73s`,
+  down from `13.79s` for the equivalent turn before the fix. The owner didn't feel
+  any lag on this run.
+
+**Why**
+
+This is the same underlying lesson as the RPM finding two entries back, applied to
+a different resource: a lazy-loaded singleton is invisible until something forces
+it to load, and whichever caller happens to go first eats a cost that has nothing
+to do with that caller's own work. Debugging this from "it felt slow once" to an
+exact root cause required reading the raw log rather than re-running the test and
+hoping — the `"Loading SentenceTransformer"` line appearing exactly once, exactly
+inside the slow turn's `thinking` window, is what turned a vague feeling into a
+provable, fixable claim. `setup_fnc` is the right place for the fix specifically
+*because* LiveKit already spawns a fresh process per room (a deliberate isolation
+choice, not something to fight) — the fix works with that architecture by paying
+the cost once per process at a time nobody is waiting on it, rather than trying to
+share state across processes or avoid the per-room process model entirely.
+
+**Decisions made**
+
+- Reused `retrieval.py`'s existing `_match_sync` helper for the warmup call instead
+  of writing separate prewarm-specific logic to touch the embedder and Supabase
+  client individually — one code path, so the thing being warmed is provably
+  identical to the thing a real query runs, not a parallel implementation that
+  could drift out of sync with it.
+- The warmup call's result is discarded — its only job is populating the two
+  `lru_cache`s, not producing a usable answer, so there's no result-shape concern
+  to worry about matching `retrieve()`'s contract.
+- Did not attempt to also prewarm Deepgram/Gemini connections — `google.LLM` and
+  the Deepgram plugins already call `.prewarm()` internally as part of
+  `AgentSession` construction (confirmed via `docs/SDK_NOTES.md`'s reading of the
+  SDK — `agent_session.py` calls `self._llm.prewarm(loop=self._loop)`), so that
+  class of cold-start was already handled by the framework; only the project's own
+  lazily-loaded singletons (embedder, Supabase client) were the actual gap.
+
+**Verification**
+
+- Live, not simulated: restarted the real worker, ran a real conversation through
+  the Agent Console, and read the resulting `worker.log` end to end rather than
+  trusting a single spot-checked number.
+- Confirmed the prewarm hook fires exactly where expected (inside `setup_fnc`,
+  before `"registered worker"`) and confirmed its cost is absorbed by comparing
+  first-batch vs. later-batch `job runner initialized` `elapsed_time` values in the
+  same log — first batch paid the real cost once; every process after that was
+  fast, which is the expected shape if the fix is working and not just coincidence.
+  Deferred a second, deliberately controlled test (fresh worker restart, first
+  message immediately a grounded question, nothing warmed by prior turns) to a
+  later session if the improvement ever needs re-confirming in isolation — this
+  session's data was conclusive enough on its own.
+- The ~10s increase in the worker's own startup-to-registered latency and the
+  leftover Hugging Face Hub warning (unauthenticated requests) are both cosmetic,
+  pre-existing side effects of this change or unrelated to it — noted but not
+  acted on; the startup delay is a one-time worker-launch cost, never something a
+  visitor waits through.
+- Scanned the diff for secret-shaped strings before staging — none found.
+- Committed as `c2a3435`, work only — this journal entry is the separate commit
+  that follows it, per `CLAUDE.md`'s log-then-commit sequence.
