@@ -138,66 +138,64 @@ Read the relevant doc **before** implementing:
 - [x] Phase 0 — Accounts and scaffolding
 - [x] Phase 1 — Audio round-trip
 - [x] Phase 2 — Corpus and ingestion
-- [ ] Phase 3 — Grounding and citations
-- [ ] Phase 4 — UX
-- [ ] Phase 5 — Deployment
+- [x] Phase 3 — Grounding and citations (core build + Suite C voice run done;
+      20-turn latency measurement still open)
+- [ ] Phase 4 — UX (connection states, mic flow, suggested questions done;
+      transcript panel and mobile polish still open)
+- [ ] Phase 5 — Deployment (first live deployment done and verified; several
+      hardening items still open — see below)
 - [ ] Phase 6 — Testing and submission
 
-**Now working on:** Phase 3 Day 4 build items are all done; Phase 3's full exit
-criteria (20-question zero-fabrication pass, latency measured across 20 turns) are
-not yet formally verified — that's next. Days 1–3: `agent/retrieval.py` (embed +
-hybrid pgvector search + threshold gate), `agent/twin_agent.py` (`TwinAgent` with the
-real `search_my_background` tool), `agent/citations.py` (publishes before generation,
-per ADR-005), the real `agent/prompts/system_prompt.md`, and `agent/main.py` wired to
-all of it. Two real bugs found and fixed via live testing: FR-7.2's spoken fallback on
-exhausted LLM retries (`session.on("error")` in `main.py`), and a 13.79s cold-start
-latency spike on the first grounded turn per job process, fixed with a `setup_fnc`
-prewarm hook (`agent/main.py`'s `_prewarm`). Switched `GEMINI_MODEL` from the
-`gemini-flash-latest` alias (drifted to a 5 RPM model with no warning) to the pinned
-`gemini-3.5-flash-lite` (verified ≥15 RPM live).
+**Now working on:** Phase 3's build and voice-verification are done —
+`TEST_PLAN.md` Suite C ran by voice, 7/7 pass (2026-08-21). `agent/retrieval.py`
+(embed + hybrid pgvector search + threshold gate, tuned to **0.55**),
+`agent/twin_agent.py` (`TwinAgent` with `search_my_background`),
+`agent/citations.py` (publishes before generation, per ADR-005), the real
+`agent/prompts/system_prompt.md`, and `agent/main.py` are all live and verified.
+Only NFR-1.1/1.2's formal 20-turn latency measurement is still unmeasured.
 
-Day 4, all four items done: (1) `RETRIEVAL_THRESHOLD` tuned to **0.55** against a
-real 13-question Suite A + the full Suite B via the new `ingestion/tune_threshold.py`
-— see ADR-004's 2026-08-21 amendment for why no threshold cleanly separates both
-failure classes for this corpus. (2) The Token Service (`api/main.py`) now exists —
-`POST /token` mints a real, unique-room, 15-minute-TTL LiveKit token; `api/config.py`
-is deliberately scoped to LiveKit creds only, separate from `agent/config.py`. (3) A
-minimal frontend (`web/`, Vite + React + TypeScript + `@livekit/components-react`)
-now exists — room connection, mic toggle, nothing else styled/polished (Phase 4
-scope). (4) `web/src/components/CitationsPanel.tsx` listens on the `citations` data
-channel and renders source cards keyed by `turn_id`; verified live end-to-end for the
-first time through this project's own frontend and Token Service (previously only
-ever tested via LiveKit's Agent Console) — real token issuance, real automatic agent
-dispatch, real greeting, and both `match`/`no_match` citation cases confirmed
-rendering correctly (FR-4.6 holds) by publishing real payloads via
-`livekit.api.RoomServiceClient.send_data` into the live browser session (the Browser
-pane sandbox blocks mic capture, so a full spoken conversation couldn't be driven
-through it, but the citations contract itself was proven with real data-channel
-traffic, not mocked). A real bug was found and fixed along the way:
-`LiveKitRoom`'s `audio` prop was auto-requesting the mic on connect and dropping the
-*entire room connection* on denial instead of just failing to publish audio — removed
-it; mic is now opt-in via `ControlBar`'s toggle.
+Phase 4 has three of five prioritized items done: `AgentStatus.tsx` (FR-5.2,
+via `useVoiceAssistant()`), `MicPermissionNotice.tsx` (explainer + a
+`mediaDevicesError`-driven denied-state message), and `SuggestedQuestions.tsx`
+(FR-5.4, `CITATION_SPEC.md` §7's four demo questions — with question 1 swapped
+to `TEST_PLAN.md`'s A2 phrasing since A1's literal wording is the known
+retrieval-ranking gap noted below). Still open: the transcript panel (FR-5.1)
+and mobile responsive layout.
 
-**Next up:** Owner confirmed a real spoken conversation through `web/` works
-(2026-08-21, own mic, own browser — this session could only verify the data-channel
-side). UI needs real visual work before Phase 4 is "done," but that's Phase 4's job,
-not a Day 4 gap — Day 4 was deliberately unstyled. Still open before Phase 3's exit
-criteria are fully met: `TEST_PLAN.md` Suite C's full adversarial run by voice, and
-the 20-turn latency measurement (NFR-1.1/1.2).
+**Phase 5, first live deployment is up and verified end-to-end**
+(2026-08-21): Token Service on Render
+(`https://voice-twin-api-46lk.onrender.com`, via the `render.yaml` Blueprint
+and a Token-Service-only `api/requirements.txt` kept separate from the shared
+`pyproject.toml`), frontend on Vercel
+(`https://ai-digital-twin-blue.vercel.app`), agent worker running as a
+long-lived local process (LiveKit dispatch is outbound-only, so this works —
+see `docs/DEPLOYMENT.md` Sec2's own sanctioned fallback). Verified cold, via
+unauthenticated `curl` and a browser tab with no prior site history, not
+trusted from a dashboard: the whole chain connects and the agent speaks its
+greeting. One real bug caught and fixed along the way — Vercel's Deployment
+Protection was silently gating the "public" link behind a Vercel login;
+disabled and re-verified. See `docs/DEV_JOURNAL.md`'s 2026-08-21 deployment
+entries for the full account.
+
+Still open before Phase 5's exit criteria are fully met: move the worker off
+the local machine to Fly.io, the 30-minute-idle-then-cold-open test, mobile
+Safari/cellular verification, the GitHub Actions ingestion cron, and
+confirming zero secrets in the frontend bundle by inspection.
 
 **Blocked by:** Nothing functionally. Open items: (1)/(2) the Phase 1 latency (LLM
 TTFT ~2.5s avg, one 7s spike) and barge-in timing (~455ms) numbers are still
-unrevisited since Phase 1; (3) **new, deferred to Phase 6:** "What's your most recent
-role?" — `CITATION_SPEC.md` §7's first suggested demo question — fails to retrieve the
-Freelance experience chunk in the top-4 at every threshold tested (0.50–0.65); it's a
-retrieval-ranking gap, not a threshold problem, and needs its own investigation before
-submission. See `docs/TEST_PLAN.md` Suite A's A1 note and `docs/DEV_JOURNAL.md`'s
-2026-08-21 threshold-tuning entry; (4) `bge-small-en-v1.5` has a real, demonstrated
-weakness anchoring on short acronyms/numbers inside longer passages (the CGPA
-spot-check) — hybrid search compensates for that specific case, but the threshold
-sweep also surfaced a *different* weakness class: coincidental vocabulary-proximity
-false positives (e.g. "salary" vs. an unrelated Loan-Eligibility-API README) that
-threshold tuning alone can't fully separate from real matches.
+unrevisited since Phase 1; (3) `CITATION_SPEC.md` §7's literal first demo
+question ("What's your most recent role?") still fails to retrieve the
+Freelance experience chunk in the top-4 at every threshold tested
+(0.50–0.65) — worked around in the UI by using `TEST_PLAN.md`'s A2 phrasing
+instead (2026-08-21), but the underlying retrieval-ranking gap itself is
+still unfixed and still needs its own investigation before final submission;
+(4) `bge-small-en-v1.5` has a real, demonstrated weakness anchoring on short
+acronyms/numbers inside longer passages (the CGPA spot-check) — hybrid search
+compensates for that specific case, but the threshold sweep also surfaced a
+*different* weakness class: coincidental vocabulary-proximity false positives
+(e.g. "salary" vs. an unrelated Loan-Eligibility-API README) that threshold
+tuning alone can't fully separate from real matches.
 **Decisions made this session:** GitHub content ingests via plain REST + PAT, not an
 MCP client — walked through the real trade-offs with the owner before choosing; see
 `ARCHITECTURE.md` ADR-002/ADR-003 amendments. GitHub ingestion is curated to 6 repos
