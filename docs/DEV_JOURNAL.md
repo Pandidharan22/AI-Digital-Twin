@@ -1981,3 +1981,126 @@ about it. Better that the honest answer is "it apologizes and asks you to retry"
 - Committed as `2ce1961` (the FR-7.2 handler) and `7551fd2` (the RPM documentation
   correction) — two separate work commits for two separable changes, this journal
   entry committed after both, per `CLAUDE.md`'s log-then-commit sequence.
+
+---
+
+## 2026-08-21 — Phase 3: switched GEMINI_MODEL to pinned `gemini-3.5-flash-lite`
+
+**What happened**
+
+- Researched a replacement for the 5-RPM `gemini-3.7-flash` at the owner's request:
+  "find an LLM with at least 10 RPM and good performance, make sure it's not
+  deprecated." Static docs turned out to be useless for this — Google's rate-limits
+  page no longer publishes a per-model free-tier RPM table (moved to an
+  account-gated AI Studio dashboard), and every third-party blog found via search
+  was quoting numbers for the 2.5 generation, which is **entirely dead** for this
+  project's account: live-tested `gemini-2.5-flash`, `gemini-2.5-flash-lite`, and
+  `gemini-2.5-pro` all return `404 NOT_FOUND: no longer available to new
+  users`. Every blog-sourced RPM figure for those three models was therefore moot
+  before the comparison even started.
+- Determined real numbers the only reliable way left: burst-tested each live 3.x
+  candidate directly against the real API (minimal `generateContent` calls, reading
+  the quota `limit` back from the `429` error body when one hit) rather than
+  guessing. Confirmed: `gemini-3.5-flash` and `gemini-3.7-flash` both cap at 5 RPM
+  (full-Flash tier); `gemini-3.5-flash-lite` and `gemini-3.1-flash-lite` both sustain
+  ≥15 RPM (Flash-Lite tier). Presented both qualifying candidates with pros/cons,
+  changed nothing yet, per the owner's explicit "list them, I'll decide" instruction.
+- Owner chose `gemini-3.5-flash-lite`, pinned rather than another rolling alias —
+  matching the recommendation made alongside the comparison: the alias
+  (`gemini-flash-latest`) was supposed to dodge model retirement, but it's exactly
+  what silently cut the RPM budget in the first place when Google moved its target
+  from a 10 RPM model to a 5 RPM one with zero warning. A pinned ID can only fail
+  loudly (404 on retirement), which this project already has a track record of
+  catching (the 2.5-generation failures above, and the original Phase 1 finding in
+  `docs/SDK_NOTES.md`).
+- Before touching any files, discovered the working tree already had a partial,
+  **uncommitted** version of this exact switch sitting in `agent/config.py` and
+  `.env.example` — dated 2026-08-21, using the `gemini-flash-lite-latest` rolling
+  alias, with a comment describing verification testing (15 RPM, correct
+  call/skip behavior across three prompts) matching almost exactly what this
+  session was about to do independently. This is very likely a prior Claude Code
+  session's work that never reached the commit step — consistent with an earlier
+  `[SYSTEM NOTIFICATION]` this session received reporting "no completion record...
+  may have been stopped... or running when the previous process exited" for an
+  unrelated background command. Rather than discard or blindly build on top of
+  unfamiliar uncommitted state, read it, confirmed it was sound and consistent with
+  this session's own independent findings, and edited it in place to use the pinned
+  ID the owner actually asked for instead of the alias it had used — treating it as
+  a legitimate draft to correct, not stray junk to delete.
+- Independently re-verified the inherited draft's tool-calling claim rather than
+  trusting it as written: built a standalone script driving the actual
+  `livekit.plugins.google.LLM` plugin with `TwinAgent`'s real system prompt and
+  `search_my_background` tool attached (via `LLM.chat(chat_ctx=..., tools=...)`,
+  not the raw REST API), and ran three real prompts through it — a greeting, a
+  factual question, and the adversarial "you worked at Google, right?" case.
+  Confirmed live: the greeting produces zero tool calls, the factual question and
+  the adversarial question both correctly trigger `search_my_background`.
+- Added `GEMINI_MODEL=gemini-3.5-flash-lite` explicitly to `.env` (it previously had
+  no `GEMINI_MODEL` line at all and was silently relying on `config.py`'s code
+  default), matching how every other tunable value in this project is set
+  explicitly rather than implicitly inherited.
+- Separately, made an operational mistake worth recording honestly: while
+  inspecting `.env` for the existing `GEMINI_MODEL` line, ran an unredacted `grep`
+  that printed the real `GEMINI_API_KEY` value into a tool-output block before a
+  planned `sed` redaction ran on a *different* command — the raw key value briefly
+  appeared in this session's own transcript. Flagged it to the owner immediately,
+  recommended rotating the key in Google AI Studio out of caution, and switched to
+  always piping `.env` inspection through redaction from that point on. Recorded
+  here rather than quietly fixed and forgotten, since a project this focused on
+  "never hardcode secrets" (`CLAUDE.md` rule 1) should have an honest record when
+  a secret briefly surfaced somewhere it shouldn't have, even transiently and
+  locally.
+
+**Why**
+
+The core lesson repeats the one from yesterday's RPM finding: a rolling alias is
+not actually a hedge against model churn, it's a *different* kind of exposure to
+it — silent instead of loud. Pinning trades "never have to think about this again"
+for "will fail in an obvious, detectable way if Google retires it," which is the
+better trade for a project whose whole grounding story depends on knowing exactly
+what's running, not on trusting an alias to keep resolving somewhere reasonable.
+
+Re-verifying the inherited draft's claims rather than trusting them as written
+matters for the same reason `CLAUDE.md` rule 2 insists on reading the installed SDK
+directly rather than reproducing patterns from memory: a comment asserting
+something was tested is not the same as it being true *for the code as it exists
+right now*, especially content left by a session with no way to hand off context
+directly. The independent re-run confirmed the inherited claim was accurate, but
+that was worth establishing rather than assuming.
+
+**Decisions made**
+
+- Pinned model ID over rolling alias, reversing this project's own Phase 1
+  reasoning now that the alias has caused the exact failure it was meant to
+  prevent — see `agent/config.py`'s updated comment for the full chain of
+  reasoning kept in the code itself, not just here.
+- `GEMINI_MODEL` is now set explicitly in `.env`, not left to the code default —
+  closes a small inconsistency where the actually-running model depended on
+  reading `config.py` to know, rather than being visible in the environment file
+  that's supposed to be the single source of truth for runtime configuration.
+- Did not change `RETRIEVAL_THRESHOLD`, `RETRIEVAL_TOP_K`, or any other tuning
+  value as part of this — scoped strictly to the model swap the owner asked for.
+
+**Verification**
+
+- Live burst-tested 7 model IDs against the real API before recommending anything;
+  results and methodology covered above and in the conversation the owner
+  approved before choosing.
+- Ran `python -c "from agent import config; assert config.GEMINI_MODEL ==
+  'gemini-3.5-flash-lite'"` — confirms `.env`'s new explicit value is what
+  `config.py` actually loads, not just what the file says.
+- Ran `python -c "import agent.main"` — imports cleanly with the new model wired
+  through `main.py`'s `google.LLM(model=config.GEMINI_MODEL, ...)` call site,
+  unchanged since Phase 3's earlier wiring step.
+- Ran the three-prompt tool-calling test described above through the real
+  `google.LLM` plugin and real `TwinAgent` instance — not mocked, not assumed from
+  the inherited comment.
+- Scanned the diff for secret-shaped strings before staging — none found in the
+  staged changes themselves (the transient exposure noted above was in a tool
+  output, not anything committed).
+- Committed as `b3ee641` — a single commit covering `agent/config.py`,
+  `.env.example`, `CLAUDE.md`, `docs/ARCHITECTURE.md`, and `docs/DEPLOYMENT.md`,
+  since all five are one coherent change (the model swap and its documentation),
+  not separable steps. `.env` itself is gitignored per `CLAUDE.md` rule 1 and was
+  updated locally only. This journal entry follows as the separate commit, per
+  `CLAUDE.md`'s log-then-commit sequence.
