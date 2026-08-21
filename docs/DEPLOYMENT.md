@@ -20,7 +20,7 @@ DEEPGRAM_API_KEY=
 
 # Google Gemini
 GEMINI_API_KEY=
-GEMINI_MODEL=gemini-flash-latest
+GEMINI_MODEL=gemini-3.5-flash-lite
 
 # Supabase
 SUPABASE_URL=
@@ -130,19 +130,22 @@ exceeds 15 seconds, fix it before submitting.
 |---|---|---|---|
 | LiveKit Build | 1,000 agent min/month | ~16 hrs conversation | Ample |
 | Deepgram | $200 credit, no expiry | Thousands of minutes | Ample |
-| Gemini Flash | 5 RPM (verified live 2026-08-20), ~250 RPD | One turn = one request | 429 → backoff |
+| Gemini Flash-Lite | ≥15 RPM (`gemini-3.5-flash-lite`, pinned, verified live 2026-08-21) | One turn = one request (grounded turns = two) | 429 → backoff |
 | Supabase | 500MB DB, pauses after 7 days idle | Corpus is KB | Ping weekly |
 | Vercel Hobby | 100GB bandwidth | Trivial | Ample |
 | GitHub Actions | 2,000 min/month | Ingestion is minutes | Ample |
 
 **The two real constraints:**
 
-- **Gemini RPM.** Tighter than it looks — 5 RPM, not ~10. A single visitor's greeting
-  plus one grounded question already tripped it in live Phase 3 testing (see
-  `DEV_JOURNAL.md`, 2026-08-20), no concurrency needed. Exponential backoff (FR-7.1) is
-  the plugin's own built-in retry; the spoken fallback (FR-7.2) is implemented in
-  `agent/main.py`'s `session.on("error")` handler, so an exhausted retry budget reads
-  as an apology, not a silent hang.
+- **Gemini RPM.** The full-Flash tier this project ran on initially (5 RPM) was tight
+  enough that a single visitor's greeting plus one grounded question tripped it in live
+  Phase 3 testing (see `DEV_JOURNAL.md`, 2026-08-20) — no concurrency needed. Switched
+  to the pinned `gemini-3.5-flash-lite` (≥15 RPM, verified live 2026-08-21) for more
+  headroom; still worth budgeting for, since a grounded (tool-calling) turn costs two
+  Gemini requests, not one. Exponential backoff (FR-7.1) is the plugin's own built-in
+  retry; the spoken fallback (FR-7.2) is implemented in `agent/main.py`'s
+  `session.on("error")` handler, so an exhausted retry budget reads as an apology, not
+  a silent hang.
 - **Supabase idle pause.** Free projects pause after ~7 days of inactivity. Your daily
   ingestion cron incidentally prevents this — a nice side effect worth noting.
 

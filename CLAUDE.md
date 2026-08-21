@@ -55,7 +55,7 @@ prototype.
 |---|---|---|
 | Transport | LiveKit Cloud | Free Build plan |
 | STT | Deepgram Nova-3 | Streaming; $200 free credit |
-| LLM | Gemini Flash | Free tier; 5 RPM (`gemini-3.7-flash`, verified live 2026-08-20) — handle 429s |
+| LLM | Gemini Flash-Lite | Free tier; ≥15 RPM (`gemini-3.5-flash-lite`, pinned, verified live 2026-08-21) — handle 429s |
 | TTS | Deepgram Aura-2 | **Same credit as STT** |
 | Embeddings | `bge-small-en-v1.5` local | CPU, 384 dims |
 | Vector store | Supabase pgvector | Free tier |
@@ -172,9 +172,18 @@ matching what the resume/`context.md` narrative actually references, not all 22
 non-fork repos (would have been 212 chunks of mostly-irrelevant coursework). `corpus/*`
 is gitignored except `README.md` — resume/`context.md` carry personal contact info,
 so source documents are ingested but never pushed to public git history.
-**Decisions made in earlier sessions:** `GEMINI_MODEL` defaults to the
-`gemini-flash-latest` rolling alias, not a pinned version — `gemini-2.5-flash` (the
-plugin's own compiled-in default) is confirmed dead (404 "no longer available to new
-users") despite still appearing in the `/models` listing. `agent/main.py` deliberately
-omits `agent_name` on `@server.rtc_session()` to keep automatic dispatch (FR-1.4) — a
+**Decisions made in earlier sessions:** `GEMINI_MODEL` defaults to the pinned
+`gemini-3.5-flash-lite` (switched from the `gemini-flash-latest` rolling alias in
+Phase 3 after a live 429 — see `docs/DEV_JOURNAL.md`'s 2026-08-21 entry: the full-
+Flash tier `gemini-flash-latest` resolves to is only 5 RPM on the free tier, vs
+`gemini-3.5-flash-lite`'s verified ≥15 RPM, with correct tool-calling behaviour
+confirmed live against the real system prompt and tool across three cases —
+greeting, factual question, adversarial false-premise). Deliberately pinned rather
+than another rolling alias — the alias was supposed to dodge model retirement, but
+it's exactly what silently cut the RPM budget in the first place when Google moved
+its target underfoot with no warning; a pinned ID can only fail loudly (404), not
+quietly. `gemini-2.5-flash` and `gemini-2.5-flash-lite` (this project's earlier
+choices) are both confirmed dead (404 "no longer available to new users") despite
+still appearing in the `/models` listing. `agent/main.py` deliberately omits
+`agent_name` on `@server.rtc_session()` to keep automatic dispatch (FR-1.4) — a
 non-empty `agent_name` silently switches to explicit-dispatch-only.

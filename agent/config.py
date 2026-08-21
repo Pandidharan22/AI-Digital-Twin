@@ -23,14 +23,31 @@ load_dotenv()
 # under a second env var name. See docs/SDK_NOTES.md Sec5.
 GEMINI_API_KEY = os.environ["GEMINI_API_KEY"]
 
-# "gemini-2.5-flash" (the plugin's own compiled-in default, and DEPLOYMENT.md's
-# original documented default) returns a live HTTP 404 "no longer available to
-# new users" as of this verification -- confirmed by a direct generateContent
-# call, not assumed. "gemini-flash-latest" is a rolling alias Google maintains
-# to whatever the current recommended flash model is (verified working,
-# resolved to "gemini-3.7-flash" at time of writing) -- using the alias avoids
-# repeating this exact breakage the next time a pinned version is retired.
-GEMINI_MODEL = os.environ.get("GEMINI_MODEL", "gemini-flash-latest")
+# "gemini-2.5-flash" and "gemini-2.5-flash-lite" (the plugin's own compiled-in
+# default and this project's original Phase 1 pinned choice, respectively)
+# both return a live HTTP 404 "no longer available to new users" as of this
+# verification -- confirmed by direct generateContent calls, not assumed.
+# "gemini-flash-latest", the rolling alias this project switched to in Phase 1
+# to dodge exactly that kind of retirement, currently resolves to
+# "gemini-3.7-flash" -- a full Flash model whose free-tier limit is only 5
+# RPM, confirmed live by a real 429 during Phase 3 voice testing
+# (docs/DEV_JOURNAL.md, 2026-08-20).
+#
+# "gemini-3.5-flash-lite" replaces it here, and is pinned rather than another
+# rolling alias -- deliberately: the whole point of "gemini-flash-latest" was
+# to avoid depending on a specific model ID, and that's exactly what silently
+# changed the RPM budget underfoot when Google moved the alias's target from
+# a 10 RPM model to a 5 RPM one with no warning. A pinned ID can't drift; it
+# can only 404 outright when retired, which is a loud, obvious failure this
+# project already knows how to detect and fix (see the 2.5-generation
+# failures above), not a silent budget cut. Verified live (2026-08-21):
+# survives 15 rapid successive calls with zero 429s (>=15 RPM, 3x the
+# full-Flash figure), and correctly calls/skips search_my_background against
+# this project's actual system prompt and tool across three real test
+# prompts run through the actual google.LLM plugin -- a greeting (no tool
+# call), a factual question (tool called), and the highest-value adversarial
+# case, "you worked at Google, right?" (tool called, not agreed with).
+GEMINI_MODEL = os.environ.get("GEMINI_MODEL", "gemini-3.5-flash-lite")
 
 # Supabase -- retrieval.py talks to match_chunks() through the supabase-py RPC
 # client (same client ingestion/validate.py uses), not a direct psycopg

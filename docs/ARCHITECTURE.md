@@ -370,16 +370,23 @@ Indexes: HNSW on `embedding` (cosine distance) and GIN on `text_search` (full-te
 
 ## 7. Known boundaries (state these in the writeup)
 
-- **Concurrency.** Gemini free tier is **5 RPM**, not the ~10 RPM originally assumed
-  here — corrected from a live 429 during Phase 3's first voice test (see
-  `DEV_JOURNAL.md`, 2026-08-20): `generativelanguage.googleapis.com/generate_content_
-  free_tier_requests` capped at 5 for `gemini-3.7-flash`, the model `gemini-flash-
-  latest` currently resolves to. Tight enough that a single visitor can trip it —
-  a greeting plus one grounded question (which needed a couple of 503 retries) was
-  enough in testing. Concurrent users make it worse; paid Gemini (~$0.30/M input
-  tokens) is the fix either way. The architecture doesn't change — only the billing
-  flag. FR-7.2's fallback speech (`agent/main.py`'s `session.on("error")` handler)
-  is what keeps a tripped limit from reading as a silent hang.
+- **Concurrency.** The full-Flash tier this project ran on initially
+  (`gemini-3.7-flash`, reached via the `gemini-flash-latest` rolling alias) was only
+  **5 RPM** on the free tier, not the ~10 RPM originally assumed here — discovered via
+  a live 429 during Phase 3's first voice test (see `DEV_JOURNAL.md`, 2026-08-20):
+  `generativelanguage.googleapis.com/generate_content_free_tier_requests` capped at 5.
+  Tight enough that a single visitor could trip it — a greeting plus one grounded
+  question (which needed a couple of 503 retries) was enough in testing. Switched to
+  the pinned `gemini-3.5-flash-lite` (**≥15 RPM**, verified live 2026-08-21, both the
+  RPM headroom and correct tool-calling behavior against the real system prompt) —
+  pinned deliberately rather than another rolling alias, since the alias is exactly
+  what caused the silent RPM cut in the first place when Google moved its target
+  underfoot with no warning. Even at 15 RPM, concurrent users or a fast back-and-forth
+  (a grounded turn costs two Gemini requests, not one) can still trip it; paid Gemini
+  (~$0.30/M input tokens) is the fix either way. The architecture doesn't change —
+  only the billing flag. FR-7.2's fallback speech (`agent/main.py`'s
+  `session.on("error")` handler) is what keeps a tripped limit from reading as a
+  silent hang, regardless of which model is configured.
 - **Cold start.** Free-tier hosts sleep. Mitigated with keep-warm; production would use
   an always-on instance.
 - **Corpus staleness.** Bounded by ingestion cadence, not unbounded.
