@@ -1891,3 +1891,93 @@ rather than getting collapsed into "the rate limit broke it":
 - This entry is being committed on its own, at the owner's explicit request, ahead of
   any fix — a deliberate, requested exception to the usual "work commit, then journal
   commit" order, made because there is no work commit to sequence it after yet.
+
+---
+
+## 2026-08-21 — Phase 3: FR-7.2 fallback speech, and the RPM documentation correction
+
+**What happened**
+
+- Implemented `agent/main.py`'s `session.on("error")` handler to close the exact gap
+  yesterday's live test found: a `session.say(LLM_FALLBACK_MESSAGE)` call, but only
+  when the emitted event is an `LLMError` with `recoverable=False`.
+- Getting that condition right required reading `livekit/agents/llm/llm.py`'s
+  `_main_task` directly rather than guessing at the event shape: every retried attempt
+  emits `LLMError(recoverable=True)` first (the individual 503/429 warnings already
+  visible in yesterday's log), and only the final, retry-budget-exhausted attempt
+  emits `LLMError(recoverable=False)` immediately before raising
+  `APIConnectionError`. So the handler fires exactly once per genuinely failed turn —
+  not once per retry, which would have meant multiple spoken apologies stacking up
+  mid-backoff for a single question. Also read `AgentSession._on_error` (the
+  framework's *internal* handler, separate from the public `"error"` event this
+  session hook listens on): it turns out `AgentSession` already counts consecutive
+  unrecoverable errors and force-closes the session after 3 of them
+  (`max_unrecoverable_errors`), but does nothing user-facing *below* that threshold —
+  which is exactly the silent-hang gap the live 429 exposed. A single hook on the
+  public `"error"` event, filtering to unrecoverable LLM errors, is a complete fix at
+  the app layer without needing to touch or override that internal counting logic.
+- Corrected the Gemini RPM figure everywhere it was documented wrong: `CLAUDE.md`'s
+  stack table, `ARCHITECTURE.md` Sec7's known-boundaries list, and `DEPLOYMENT.md`'s
+  free-tier limits table all said "~10 RPM" — the real, live-confirmed number for
+  `gemini-3.7-flash` is **5 RPM**. Also corrected `DEPLOYMENT.md`'s accompanying claim
+  that the limit is "fine for one visitor" and only a risk with concurrent users —
+  false, per yesterday's own test: a single visitor's greeting plus one grounded
+  question, with a couple of 503 retries mixed in, was enough to trip it alone.
+  Left the original, now-superseded `DEV_JOURNAL.md` entries carrying the old "~10
+  RPM" number untouched (2026-08-19's Phase 2 entry, yesterday's Phase 3 diagnosis
+  entry) — consistent with this project's own convention of not silently rewriting
+  a dated record of what was believed true at the time; the correction lives in the
+  living docs (`CLAUDE.md`/`ARCHITECTURE.md`/`DEPLOYMENT.md`) and in this entry, not
+  by editing history.
+
+**Why**
+
+Diagnosing the finding without fixing it (yesterday, on request) was step one;
+implementing the fix is a different step and deserves its own entry rather than being
+folded backward into the diagnosis entry after the fact — same "one phase-item at a
+time" discipline this journal has followed all along. The fix itself matters beyond
+just "stop the silent hang": FR-7.2 is one of `SRS.md`'s explicit, numbered
+requirements, and `NFR-2.2` ("no single pipeline stage failure SHALL terminate the
+session without a spoken explanation") is exactly the property a portfolio evaluator
+would test for by doing the thing that accidentally happened here — asking a question
+right after a greeting, tripping a real rate limit, and watching what the agent does
+about it. Better that the honest answer is "it apologizes and asks you to retry" than
+"it goes quiet and you have to guess whether it's broken."
+
+**Decisions made**
+
+- The fallback handler is scoped to `llm_error` only, not STT/TTS errors too, even
+  though the mechanism (`session.on("error")`, check `.recoverable`) would extend
+  trivially to either. FR-7.2's text is specifically about LLM rate limits; FR-7.3
+  (vector store unavailability) and FR-7.4 (structured stage-failure logging) are
+  separate, distinct SRS requirements not covered by this handler and not asked for
+  in this step — scoping the fix to exactly what was requested rather than
+  speculatively covering every pipeline stage's failure mode in one pass.
+- `LLM_FALLBACK_MESSAGE` is a module-level constant in `main.py`, not moved into
+  `agent/config.py` — matches the existing precedent already in this file (the
+  greeting instructions are inline too, not centralized), rather than introducing a
+  new centralization convention for just this one string.
+
+**Verification**
+
+- Ran `python -c "import agent.main"` after the change — imports cleanly, exit code 0.
+- Built a standalone script that constructs a real `AgentSession` (real Deepgram/
+  Google/Silero plugin instances, this project's actual config), registers the exact
+  handler logic from `main.py`, monkey-patches `session.say` to a capturing stub, and
+  emits two real `ErrorEvent`/`LLMError` objects — one `recoverable=True`, one
+  `recoverable=False` — through the session's own event emitter (`session.emit`, not
+  a mock of it). Confirmed: the `recoverable=True` event produces zero spoken output
+  (mid-retry, correctly silent); the `recoverable=False` event produces exactly one
+  call to `session.say` with the fallback text. This exercises the real SDK event
+  path this handler will see in production, not just the handler function in
+  isolation.
+- Did not re-run a live voice session to trigger an actual 429 — deliberately, to
+  avoid spending more of the same scarce 5-RPM budget confirming a fix for the thing
+  that budget just caused. The event-level verification above exercises the identical
+  code path a live 429 would trigger; a live re-confirmation is cheap to do next time
+  a real conversation happens to trip the limit again.
+- Scanned both diffs (code and docs) for secret-shaped strings before staging — none
+  found.
+- Committed as `2ce1961` (the FR-7.2 handler) and `7551fd2` (the RPM documentation
+  correction) — two separate work commits for two separable changes, this journal
+  entry committed after both, per `CLAUDE.md`'s log-then-commit sequence.
