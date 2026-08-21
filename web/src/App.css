@@ -1,0 +1,80 @@
+/* Deliberately minimal -- no visual polish. Phase 4 (BUILD_PLAN.md) owns
+   connection-state UI, mic-permission explainer, transcript panel, mobile
+   layout, and real card styling. This is just enough to be usable. */
+
+.status-message {
+  padding: 2rem;
+  font-family: sans-serif;
+}
+
+.app-layout {
+  display: flex;
+  gap: 1.5rem;
+  padding: 1.5rem;
+  font-family: sans-serif;
+  max-width: 1000px;
+  margin: 0 auto;
+}
+
+.conversation-panel {
+  flex: 1;
+  min-width: 0;
+}
+
+.citations-panel {
+  flex: 1;
+  min-width: 0;
+  border-left: 1px solid #ccc;
+  padding-left: 1.5rem;
+}
+
+.citations-empty {
+  color: #666;
+}
+
+.citation-turn {
+  margin-bottom: 1.5rem;
+}
+
+.citation-query {
+  font-weight: 600;
+  margin-bottom: 0.5rem;
+}
+
+.citation-no-source {
+  color: #666;
+  font-style: italic;
+}
+
+.citation-cards {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.citation-card {
+  border: 1px solid #ddd;
+  border-radius: 6px;
+  padding: 0.75rem;
+}
+
+.citation-card-header {
+  display: flex;
+  justify-content: space-between;
+  font-size: 0.85rem;
+  color: #444;
+}
+
+.citation-section {
+  font-size: 0.85rem;
+  color: #666;
+  margin-bottom: 0.4rem;
+}
+
+.citation-excerpt {
+  font-size: 0.9rem;
+  margin: 0;
+}
