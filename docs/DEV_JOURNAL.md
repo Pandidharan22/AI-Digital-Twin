@@ -2202,3 +2202,136 @@ share state across processes or avoid the per-room process model entirely.
 - Scanned the diff for secret-shaped strings before staging — none found.
 - Committed as `c2a3435`, work only — this journal entry is the separate commit
   that follows it, per `CLAUDE.md`'s log-then-commit sequence.
+
+---
+
+## 2026-08-21 — Phase 3 Day 4: threshold tuning found no clean separation exists
+
+**What happened**
+
+- Started Day 4 (per `BUILD_PLAN.md`: frontend citations listener, source cards,
+  `no_match` clearing stale cards, threshold tuning). Investigating before
+  implementing surfaced that neither the Token Service (`api/main.py`) nor any
+  frontend (`web/`) exists yet — both are Phase 0 docstring stubs, and
+  `web/README.md` explicitly says frontend work starts in Phase 4, conflicting with
+  `BUILD_PLAN.md`'s Day 4 items. Raised this via `AskUserQuestion` rather than
+  guessing; owner chose to scaffold a minimal frontend now (room connection +
+  citations listener + basic cards only, all UX polish deferred to Phase 4 as
+  planned) — that expanded scope went through a full plan-mode pass
+  (`EnterPlanMode`/`ExitPlanMode`) before any code was written, given it touches
+  multiple new subsystems (Token Service, frontend) the owner should sign off on
+  before implementation starts.
+- Did threshold tuning first, ahead of the Token Service/frontend, since it needs
+  no new infrastructure. Wrote `ingestion/tune_threshold.py`, which sweeps
+  `TEST_PLAN.md`'s Suite A/B against the live corpus at a range of threshold values
+  by reusing `validate.py`'s existing `_match(client, query, threshold, top_k)`
+  helper — the same embed+RPC code path `agent/retrieval.py` uses in production,
+  just parameterized by threshold instead of reading the fixed value baked into
+  `config.RETRIEVAL_THRESHOLD` at import time. Replaced `TEST_PLAN.md` Suite A's
+  generic `[company]`/`[your main project]` placeholders with 13 real questions
+  grounded in the actual resume and `corpus/context.md` content (extending
+  `validate.py`'s existing 5 `SPOT_CHECKS`), since a meaningful sweep needs real
+  expected-answer keywords to check against, not placeholder text.
+- The first sweep (0.35–0.55) found something worse than expected: **no threshold
+  in that range reached zero Suite B false accepts.** At the current production
+  value (0.50), 4 of 7 out-of-scope questions returned results. Widened the sweep
+  to 0.70 and diagnosed the specific false accepts directly (which query, which
+  chunk, what similarity) rather than just staring at the aggregate counts: three
+  of the four false accepts at 0.50 cleared by 0.55 (election/siblings/last-weekend,
+  all sub-0.53 similarity, genuinely marginal), but one — "what's your salary
+  expectation?" matching an unrelated GitHub README about a *Loan Eligibility & Risk
+  Scoring* API's usage docs, at similarity 0.61 — persisted all the way to 0.60 and
+  only cleared at 0.65.
+- Reaching 0.65 to kill that one anomaly cost **6 of 13** Suite A matches (11/13 at
+  0.50 down to 7/13 at 0.65) — `TEST_PLAN.md`'s own stated rule ("choose the lowest
+  threshold with zero false accepts") would have mechanically picked 0.65 and
+  silently gutted more than half the twin's ability to answer real questions to
+  fix one edge case. Diagnosed which Suite A questions actually failed at each
+  threshold (not just the count) before concluding anything: most were genuinely
+  borderline (0.55–0.62 similarity — "most recent role," "what did you study," "the
+  hardest technical problem," current CGPA, "what are you working on") — real
+  content, just not comfortably clearing a threshold pushed that high to chase one
+  unrelated false accept.
+- Given how load-bearing this threshold is — it's the entire structural
+  anti-hallucination mechanism ADR-004 describes — surfaced the full trade-off
+  table to the owner rather than picking a number unilaterally, with a reasoned
+  recommendation (0.55: kills 6 of 7 false accepts, keeps 9/13 Suite A) rather than
+  either extreme. Owner confirmed 0.55 via `AskUserQuestion`, and separately chose
+  to defer investigating a distinct finding — "What's your most recent role?"
+  (`CITATION_SPEC.md` §7's first suggested demo question) failing to retrieve the
+  Freelance chunk in the top-4 at *every* threshold tested, a ranking gap unrelated
+  to threshold choice — to Phase 6 rather than blocking Day 4 on it now.
+- Updated `RETRIEVAL_THRESHOLD` to `0.55` in `.env`/`.env.example`/`agent/config.py`,
+  filled in `TEST_PLAN.md`'s threshold table with the real sweep results and an
+  explicit note that the stated "lowest threshold, zero false accepts" rule didn't
+  hold cleanly here, and amended `ARCHITECTURE.md` ADR-004 with the corrected
+  finding (the original "~0.46 noise ceiling" claim was real but based on testing
+  only one out-of-scope query; the actual ceiling for this corpus reaches 0.61).
+  Rewrote `CLAUDE.md`'s "Now working on"/"Blocked by" status block, which had gone
+  stale since the end of Phase 2 despite three full Phase 3 Day 3 sessions and half
+  of Day 4 having happened since.
+
+**A secrets-handling incident, recorded honestly rather than quietly fixed.**
+While updating `.env`'s `RETRIEVAL_THRESHOLD` line, used the `Read` tool directly on
+the full `.env` file to satisfy the Edit tool's precondition of having read a file
+before editing it — printing every credential in the project (LiveKit API key and
+secret, Deepgram key, Gemini key, Supabase service key, the Supabase database
+password embedded in `DATABASE_URL`, and the GitHub PAT) unredacted into this
+session's own transcript. This is a repeat of the same class of mistake from
+2026-08-20's entry (an unredacted `grep` exposing only the Gemini key that time),
+worse in scope this time — every secret, not one. Flagged it to the owner
+immediately and recommended rotating all of them. Fixed the underlying edit with
+targeted `sed` (`sed -i 's/^RETRIEVAL_THRESHOLD=0.5$/RETRIEVAL_THRESHOLD=0.55/'
+.env`) instead, which never prints file contents, and that's the pattern going
+forward for any further `.env` edits — the earlier fix (piping `grep` through
+`sed` redaction) turned out to be an incomplete mitigation, since it doesn't help
+against a direct `Read`. `.env.example` (no real values) remains safe to `Read`
+directly; only the real `.env` needs this discipline.
+
+**Why**
+
+The core lesson repeats a shape this project keeps running into: a rule that
+sounds clean in the abstract ("lowest threshold with zero false accepts") can
+produce a bad outcome when the underlying data doesn't actually separate cleanly —
+the same category of finding as the RPM alias and the cold-start prewarm, just
+applied to retrieval quality instead of infrastructure. The fix in each case was
+the same discipline: don't apply a stated rule mechanically once live data shows
+it doesn't hold; diagnose the specific failures, understand *why*, and bring the
+real trade-off to whoever's actually accountable for the decision rather than
+silently picking whichever number the rule technically outputs.
+
+**Decisions made**
+
+- `RETRIEVAL_THRESHOLD=0.55`, chosen as a deliberate balance rather than a value
+  that achieves clean separation — recorded as such everywhere it's documented,
+  not glossed over as if 0.55 were simply "the answer."
+- `ingestion/tune_threshold.py` kept as a real, reusable tool (not a throwaway
+  script) since `CLAUDE.md`'s own status notes already flagged this needing a
+  fuller re-run in Phase 6.
+- The "most recent role" retrieval gap is logged in three places (`TEST_PLAN.md`
+  Suite A note, `CLAUDE.md` status block, this entry) rather than only one, since
+  it's exactly the kind of finding that's easy to lose track of across a long
+  project if it's only mentioned once.
+- Going forward, no `Read` (or unredacted `grep`/`cat`) of the real `.env` file —
+  targeted `sed` for edits, and if inspection is ever needed, only through a
+  redaction pipe applied to every line, not just the one being changed.
+
+**Verification**
+
+- Ran the sweep live against the real Supabase corpus at 8 threshold values, then
+  a second, targeted diagnostic pass per-query to identify exactly which Suite A/B
+  questions were failing and why, before drawing any conclusion — not just reading
+  the aggregate pass/fail counts.
+- Confirmed `agent.config.RETRIEVAL_THRESHOLD == 0.55` after the `.env` change, via
+  a fresh Python process reading the actual environment, not assumed from the file
+  edit alone.
+- Re-read `TEST_PLAN.md`'s and `ARCHITECTURE.md`'s amended sections top to bottom
+  to confirm they read coherently and don't overstate the result (explicitly
+  calling out that 0.55 is a balance, not a clean fix, in both places).
+- Deleted the two ad hoc diagnostic scripts (`_tmp_diag.py`, `_tmp_diag2.py`) used
+  to identify specific false accepts/failures — not committed, scratch work only.
+- Scanned the diff for secret-shaped strings before staging — none found in the
+  staged changes (the transcript exposure noted above was in tool output, not
+  anything committed to the repo).
+- Committed as `618eae2`, work only — this journal entry is the separate commit
+  that follows it, per `CLAUDE.md`'s log-then-commit sequence.
