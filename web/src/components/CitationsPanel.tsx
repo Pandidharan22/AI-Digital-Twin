@@ -5,6 +5,29 @@ import type { CitationPayload } from "../types/citations";
 const TOPIC = "citations";
 const decoder = new TextDecoder();
 
+// Maps agent/citations.py's `source_type` (resume | context | github_repo,
+// per ingestion/loaders/*.py) to a plain-language document label, and cleans
+// up the display text for each -- section headings for GitHub-sourced chunks
+// carry a redundant "<repo> — " prefix from ingestion/loaders/github_loader.py's
+// _split_readme, since only README.md is ever ingested per repo (curated to
+// 6 repos, see docs/DATA_INGESTION.md Sec7).
+function describeSource(source: { source: string; source_type: string; section: string }) {
+  if (source.source_type === "resume") {
+    return { label: source.section, doc: "Resume" };
+  }
+  if (source.source_type === "context") {
+    return { label: source.section, doc: "Notes (context.md)" };
+  }
+  if (source.source_type === "github_repo") {
+    const prefix = `${source.source} — `;
+    const label = source.section.startsWith(prefix)
+      ? source.section.slice(prefix.length)
+      : source.section;
+    return { label, doc: `${source.source} — README.md` };
+  }
+  return { label: source.section, doc: source.source };
+}
+
 /**
  * Listens on the "citations" data-channel topic and renders a compact source
  * reference below each turn -- just what was retrieved (source + section,
@@ -44,8 +67,9 @@ export function CitationsPanel() {
             <span className="citation-no-source">No documented source</span>
           ) : (
             <div className="citation-chips">
-              {turn.sources.map((source) =>
-                source.url ? (
+              {turn.sources.map((source) => {
+                const { label, doc } = describeSource(source);
+                return source.url ? (
                   <a
                     key={source.id}
                     className="citation-chip"
@@ -53,16 +77,16 @@ export function CitationsPanel() {
                     target="_blank"
                     rel="noreferrer"
                   >
-                    {source.section}
-                    <span className="citation-chip-source">{source.source}</span>
+                    {label}
+                    <span className="citation-chip-source">{doc}</span>
                   </a>
                 ) : (
                   <span key={source.id} className="citation-chip">
-                    {source.section}
-                    <span className="citation-chip-source">{source.source}</span>
+                    {label}
+                    <span className="citation-chip-source">{doc}</span>
                   </span>
-                ),
-              )}
+                );
+              })}
             </div>
           )}
         </div>
