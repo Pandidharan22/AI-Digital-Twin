@@ -2526,3 +2526,63 @@ the thing that surfaced the bug in the first place.
   absent from `git status` output, `web/.gitignore` respected.
 - Committed as `8eebd82`, work only — this journal entry is the separate commit
   that follows it, per `CLAUDE.md`'s log-then-commit sequence.
+
+---
+
+## 2026-08-21 — Phase 3 Day 4 closes: owner confirmed a real spoken conversation works
+
+**What happened**
+
+- The owner tested `web/` themselves against `localhost` — a real browser, real
+  microphone, a real spoken conversation through this project's own frontend for
+  the first time (this session's own testing was data-channel-only, since the
+  sandboxed Browser pane blocks microphone capture). Confirmed: **it works.**
+  This closes the one piece of Phase 3's exit criteria that specifically needed a
+  human with a working microphone rather than anything scriptable — `CLAUDE.md`'s
+  "Next up" note from the previous entry named this exact gap.
+- Feedback alongside the confirmation: the UI "looks like shit" and needs
+  significant visual work. Expected, not a surprise finding — `web/README.md`,
+  `CLAUDE.md`'s status block, and every commit message touching `web/` this
+  session have said the same thing in the same words: Day 4 built room
+  connection, a citations listener, and a plain unstyled mic toggle, nothing
+  more, with all visual polish explicitly deferred to Phase 4. The owner's
+  reaction confirms that plan was correctly scoped, not that something went
+  wrong — Phase 4's UX pass is exactly where this gets addressed, not a
+  surprise addition to the backlog.
+- Stopped all three processes left running from the previous session
+  (Token Service, agent worker, Vite dev server) at the owner's request now that
+  live testing is done for this session. Found the same orphaned-child-process
+  pattern as an earlier session's worker cleanup: `TaskStop` cleanly killed the
+  Python processes (Token Service, worker) but left `npm run dev`'s child `node`
+  process (running `vite.js`) still alive after its parent `npm-cli.js` process
+  was stopped — confirmed via `Get-CimInstance Win32_Process`, force-killed both
+  PIDs directly, then re-checked the process list came back empty.
+
+**Why**
+
+Worth recording as its own entry rather than folding into the previous one: the
+previous entry's "Verified" section was honest that mic-based conversation
+*hadn't* been tested by this session, only citations-over-data-channel. Closing
+that gap is a distinct, real event — the first actual end-to-end proof, by a
+human, that voice in, grounded answer, voice out, citations rendered all works
+together through this project's own infrastructure rather than through LiveKit's
+Agent Console. That deserves its own dated record, not to be quietly absorbed
+into "Day 4 done."
+
+**Decisions made**
+
+- None yet on the UI itself — the fix is Phase 4's job, not an ad hoc patch
+  bolted onto Day 4's deliberately minimal scope. Recorded as owner-confirmed
+  feedback here so Phase 4 planning starts from a real reaction, not a guess.
+
+**Verification**
+
+- Owner's own live test, mic and all — the one thing this session's automated
+  testing structurally could not do itself.
+- Re-confirmed the process cleanup with a second `Get-CimInstance` pass after
+  force-killing the orphaned Vite child process — empty result, not assumed
+  clean from `TaskStop`'s own success message alone.
+- No code changed in this entry — nothing to scan for secrets or stage beyond
+  this file.
+- This entry is being committed on its own, at the owner's explicit request, per
+  `CLAUDE.md`'s log-then-commit sequence.

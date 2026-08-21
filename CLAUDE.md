@@ -178,11 +178,12 @@ traffic, not mocked). A real bug was found and fixed along the way:
 *entire room connection* on denial instead of just failing to publish audio — removed
 it; mic is now opt-in via `ControlBar`'s toggle.
 
-**Next up:** Phase 3's full exit criteria per `BUILD_PLAN.md` — a real spoken
-conversation through `web/` (this session's frontend testing was data-channel-only,
-mic blocked by the Browser pane sandbox), `TEST_PLAN.md` Suite C's full adversarial
-run by voice, and the 20-turn latency measurement (NFR-1.1/1.2) — before Phase 3 gets
-checked off above.
+**Next up:** Owner confirmed a real spoken conversation through `web/` works
+(2026-08-21, own mic, own browser — this session could only verify the data-channel
+side). UI needs real visual work before Phase 4 is "done," but that's Phase 4's job,
+not a Day 4 gap — Day 4 was deliberately unstyled. Still open before Phase 3's exit
+criteria are fully met: `TEST_PLAN.md` Suite C's full adversarial run by voice, and
+the 20-turn latency measurement (NFR-1.1/1.2).
 
 **Blocked by:** Nothing functionally. Open items: (1)/(2) the Phase 1 latency (LLM
 TTFT ~2.5s avg, one 7s spike) and barge-in timing (~455ms) numbers are still
