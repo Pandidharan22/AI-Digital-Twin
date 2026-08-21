@@ -2407,3 +2407,122 @@ to prove the citations contract end-to-end yet.
 - Scanned the diff for secret-shaped strings before staging — none found.
 - Committed as `87d32a1`, work only — this journal entry is the separate commit
   that follows it, per `CLAUDE.md`'s log-then-commit sequence.
+
+---
+
+## 2026-08-21 — Phase 3 Day 4: frontend scaffold + citations listener, verified live
+
+**What happened**
+
+- Scaffolded `web/` with Vite's React-TS template. `npm create vite@latest web --
+  --template react-ts` refused non-interactively (`Operation cancelled`) because
+  `web/` already had a `README.md` in it from Phase 0 scaffolding — no stdin
+  available to answer the "directory not empty" prompt. Worked around it by
+  scaffolding into a throwaway `_web_scaffold_tmp/` directory, then moving
+  everything except its generated `README.md` into `web/`, preserving the
+  project-specific one. Removed the scaffold's unused demo assets
+  (`hero.png`/`react.svg`/`vite.svg`) and its leftover `web-scaffold-tmp` package
+  name once the merge was done.
+- Before writing any component code, verified `@livekit/components-react`'s
+  `useDataChannel` hook against the actually-installed package source (not just
+  the docs summary from planning) — read
+  `node_modules/@livekit/components-react/src/hooks/useDataChannel.ts` and
+  `node_modules/@livekit/components-core/src/observables/dataChannel.ts`
+  directly: `ReceivedDataMessage<T> = { topic?: T; payload: Uint8Array; from?:
+  Participant }`, confirming the `TextDecoder` → `JSON.parse` decode path planned
+  earlier was correct. Same discipline `CLAUDE.md` rule 2 requires for the Python
+  SDK, applied here to the JS side for the first time this project has needed it.
+- Implemented `web/src/types/citations.ts` (the `CITATION_SPEC.md` Sec4 wire
+  shape as TypeScript types) and `web/src/components/CitationsPanel.tsx`:
+  `useDataChannel("citations", onMessage)`, decode, and render source cards in a
+  list keyed by `turn_id`, newest first — deliberately never merging or
+  accumulating sources across turns, since rendering each turn's payload exactly
+  as received is what makes FR-4.6 hold structurally rather than by convention.
+- `App.tsx`: fetches a token from the Token Service on mount, wraps the app in
+  `LiveKitRoom`, renders `RoomAudioRenderer` and a minimal `ControlBar` (mic
+  toggle only — `chat`/`screenShare`/`leave`/`settings` controls all disabled,
+  since none of that is Day 4 scope).
+- `npm run build` (which runs `tsc -b` first) passed clean on the first attempt.
+- Live end-to-end test, not simulated: started the real Token Service, the real
+  agent worker, and the real Vite dev server, then opened the app in the Browser
+  pane. First attempt failed immediately — `LiveKitRoom`'s `audio` prop (set to
+  `true` to auto-publish the mic on connect) triggered a `NotAllowedError` when
+  the Browser pane's sandbox denied microphone access, and the *entire room
+  connection* dropped as a result (`disconnect from room` → `connecting ->
+  disconnected` in the console), not just the audio publish. That's a real bug
+  independent of the sandbox — a real visitor who hesitates on the mic prompt, or
+  denies it, would get bounced out of the conversation entirely rather than just
+  losing mic input. Removed `audio` from `LiveKitRoom`; the mic is now opt-in via
+  `ControlBar`'s own toggle. Re-tested: connection now reaches `connected` and
+  stays there regardless of mic permission state.
+- The sandbox still blocks mic capture, so a full spoken conversation couldn't be
+  driven through this browser tab. Verified the actual thing Day 4 needed to
+  prove — the citations wire contract and rendering — a different way: published
+  real `match` and `no_match` citations payloads directly into the live room via
+  `livekit.api`'s `RoomServiceClient.send_data` (the exact same call
+  `agent/citations.py` makes, just invoked from a standalone script instead of
+  from inside the running agent), and read the actual rendered page text back.
+  Both cases rendered correctly: the match turn showed its real source card
+  (`context.md`, score `0.62`, correct excerpt); the later no_match turn got its
+  own explicit "No documented source for this question" entry, and the earlier
+  match turn's card was still there, untouched, correctly attached to its own
+  turn — direct proof FR-4.6 holds, not inferred from reading the component code.
+- Separately confirmed the real agent worker actually auto-dispatched into this
+  browser tab's room and spoke its real greeting (read straight from the
+  worker's own log: `room=twin-21ae791a`, `"session started, sending greeting"`,
+  the actual greeting text) — proving FR-1.1–1.6 through this project's own
+  frontend and Token Service for the first time; every prior test (Phase 1
+  through today) went through LiveKit's own Agent Console instead.
+- Updated `web/README.md` from its Phase 0 "not scaffolded yet" placeholder to
+  describe what's actually there and how to run it.
+
+**Why**
+
+The `audio` prop bug is worth dwelling on: it wasn't caught by `npm run build`'s
+type-check, because it's not a type error — `audio?: boolean` is a perfectly
+valid prop, and the failure mode only shows up when a real browser actually
+denies the permission at runtime. This is exactly why `CLAUDE.md`'s working
+style insists on running things and watching real output, not just getting a
+clean compile: a frontend that builds and a frontend that behaves correctly
+under a real permission denial are different claims, and only live testing in
+an actual browser distinguishes them. The Browser pane's own mic restriction,
+which looked like it would block this whole verification step, ended up being
+the thing that surfaced the bug in the first place.
+
+**Decisions made**
+
+- Mic capture is opt-in via `ControlBar`, not auto-requested on connect — not
+  just a workaround for this session's sandbox, a real UX decision that also
+  happens to make FR-1.5 (a proper mic-permission explainer) a Phase 4
+  enhancement rather than a Day 4 blocker: the connection no longer depends on
+  the mic permission outcome at all.
+- `CitationsPanel` stores turns as a plain array, not a map keyed by `turn_id`
+  with in-place updates — each `citations` message is already a complete,
+  self-contained record of one turn (per `CITATION_SPEC.md` Sec4), so there's
+  nothing to merge or update; appending preserves turn order for free and keeps
+  FR-4.6 correct by construction rather than by careful update logic.
+- Verified the citations contract via direct server-side data publishes rather
+  than stopping at "the sandbox blocks mic, so this can't be fully tested" —
+  the citations panel doesn't care how a payload arrived, so exercising it with
+  the exact same `send_data` call the agent makes is a faithful test of the
+  actual thing Day 4 needed to prove, not a lesser substitute for a live voice
+  conversation.
+
+**Verification**
+
+- `npm run build` (`tsc -b && vite build`) — clean, zero type errors, zero
+  warnings beyond an expected bundle-size note (LiveKit's client is inherently
+  large; code-splitting is a Phase 4/5 concern, not a Day 4 one).
+- Live browser test via the Browser pane: real token fetch, real LiveKit Cloud
+  connection, `connection state changed: connecting -> connected` read directly
+  from the browser's own console log, not assumed.
+- Real agent dispatch and greeting confirmed by reading the worker's own
+  structured log for the exact room ID the browser tab was in.
+- Both citations cases (match, no_match) verified by publishing real payloads
+  through the real LiveKit data channel and reading back the actual rendered
+  page text — not a component-level mock, not code review alone.
+- Scanned the diff for secret-shaped strings before staging — none found;
+  `web/.env.local` (holding only the non-secret dev Token Service URL) confirmed
+  absent from `git status` output, `web/.gitignore` respected.
+- Committed as `8eebd82`, work only — this journal entry is the separate commit
+  that follows it, per `CLAUDE.md`'s log-then-commit sequence.

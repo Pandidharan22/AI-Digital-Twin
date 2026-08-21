@@ -143,26 +143,47 @@ Read the relevant doc **before** implementing:
 - [ ] Phase 5 — Deployment
 - [ ] Phase 6 — Testing and submission
 
-**Now working on:** Phase 3 Day 4, mid-flight. Days 1–3 done: `agent/retrieval.py`
-(embed + hybrid pgvector search + threshold gate), `agent/twin_agent.py` (`TwinAgent`
-with the real `search_my_background` tool), `agent/citations.py` (publishes before
-generation, per ADR-005), the real `agent/prompts/system_prompt.md`, and
-`agent/main.py` wired to all of it — all live-voice-tested via LiveKit Cloud's Agent
-Console (no custom frontend yet). Two real bugs found and fixed via live testing:
-FR-7.2's spoken fallback on exhausted LLM retries (`session.on("error")` in
-`main.py`), and a 13.79s cold-start latency spike on the first grounded turn per job
-process, fixed with a `setup_fnc` prewarm hook (`agent/main.py`'s `_prewarm`). Switched
-`GEMINI_MODEL` from the `gemini-flash-latest` alias (drifted to a 5 RPM model with no
-warning) to the pinned `gemini-3.5-flash-lite` (verified ≥15 RPM live). Day 4's
-threshold tuning is done: `RETRIEVAL_THRESHOLD` is now **0.55** (up from 0.5), tuned via
-the new `ingestion/tune_threshold.py` against a real 13-question Suite A + the full
-Suite B — see `docs/ARCHITECTURE.md` ADR-004's 2026-08-21 amendment for why no
-threshold cleanly separates both failure classes for this corpus.
-Still open in Day 4: the Token Service (`api/main.py`, currently a docstring stub) and
-a minimal frontend (`web/`, currently empty) with a citations listener + source cards
-— both approved via a plan (`docs/BUILD_PLAN.md`'s Day 4 assumed a frontend already
-existed; it doesn't, so this is new scope, deliberately minimal, full UX polish stays
-Phase 4).
+**Now working on:** Phase 3 Day 4 build items are all done; Phase 3's full exit
+criteria (20-question zero-fabrication pass, latency measured across 20 turns) are
+not yet formally verified — that's next. Days 1–3: `agent/retrieval.py` (embed +
+hybrid pgvector search + threshold gate), `agent/twin_agent.py` (`TwinAgent` with the
+real `search_my_background` tool), `agent/citations.py` (publishes before generation,
+per ADR-005), the real `agent/prompts/system_prompt.md`, and `agent/main.py` wired to
+all of it. Two real bugs found and fixed via live testing: FR-7.2's spoken fallback on
+exhausted LLM retries (`session.on("error")` in `main.py`), and a 13.79s cold-start
+latency spike on the first grounded turn per job process, fixed with a `setup_fnc`
+prewarm hook (`agent/main.py`'s `_prewarm`). Switched `GEMINI_MODEL` from the
+`gemini-flash-latest` alias (drifted to a 5 RPM model with no warning) to the pinned
+`gemini-3.5-flash-lite` (verified ≥15 RPM live).
+
+Day 4, all four items done: (1) `RETRIEVAL_THRESHOLD` tuned to **0.55** against a
+real 13-question Suite A + the full Suite B via the new `ingestion/tune_threshold.py`
+— see ADR-004's 2026-08-21 amendment for why no threshold cleanly separates both
+failure classes for this corpus. (2) The Token Service (`api/main.py`) now exists —
+`POST /token` mints a real, unique-room, 15-minute-TTL LiveKit token; `api/config.py`
+is deliberately scoped to LiveKit creds only, separate from `agent/config.py`. (3) A
+minimal frontend (`web/`, Vite + React + TypeScript + `@livekit/components-react`)
+now exists — room connection, mic toggle, nothing else styled/polished (Phase 4
+scope). (4) `web/src/components/CitationsPanel.tsx` listens on the `citations` data
+channel and renders source cards keyed by `turn_id`; verified live end-to-end for the
+first time through this project's own frontend and Token Service (previously only
+ever tested via LiveKit's Agent Console) — real token issuance, real automatic agent
+dispatch, real greeting, and both `match`/`no_match` citation cases confirmed
+rendering correctly (FR-4.6 holds) by publishing real payloads via
+`livekit.api.RoomServiceClient.send_data` into the live browser session (the Browser
+pane sandbox blocks mic capture, so a full spoken conversation couldn't be driven
+through it, but the citations contract itself was proven with real data-channel
+traffic, not mocked). A real bug was found and fixed along the way:
+`LiveKitRoom`'s `audio` prop was auto-requesting the mic on connect and dropping the
+*entire room connection* on denial instead of just failing to publish audio — removed
+it; mic is now opt-in via `ControlBar`'s toggle.
+
+**Next up:** Phase 3's full exit criteria per `BUILD_PLAN.md` — a real spoken
+conversation through `web/` (this session's frontend testing was data-channel-only,
+mic blocked by the Browser pane sandbox), `TEST_PLAN.md` Suite C's full adversarial
+run by voice, and the 20-turn latency measurement (NFR-1.1/1.2) — before Phase 3 gets
+checked off above.
+
 **Blocked by:** Nothing functionally. Open items: (1)/(2) the Phase 1 latency (LLM
 TTFT ~2.5s avg, one 7s spike) and barge-in timing (~455ms) numbers are still
 unrevisited since Phase 1; (3) **new, deferred to Phase 6:** "What's your most recent
