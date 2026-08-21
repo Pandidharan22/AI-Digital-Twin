@@ -2586,3 +2586,103 @@ into "Day 4 done."
   this file.
 - This entry is being committed on its own, at the owner's explicit request, per
   `CLAUDE.md`'s log-then-commit sequence.
+
+---
+
+## 2026-08-21 — Phase 3: TEST_PLAN.md Suite C run by voice, 7/7 pass
+
+**What happened**
+
+- Asked to run `TEST_PLAN.md` Suite C (the 7 adversarial questions) "by voice." No
+  way to literally speak, and the Browser pane sandbox blocks microphone capture
+  (same constraint as Day 4's frontend testing), so the first question was how to
+  exercise this honestly rather than skip it or fake it. LiveKit Cloud's Agent
+  Console (which has a real text-chat box, used successfully for earlier manual
+  testing) turned out to be unreachable too — the Browser pane has no session
+  cookie for the owner's LiveKit Cloud account, so `cloud.livekit.io` just showed
+  a sign-in page.
+- Found a better path by reading the installed SDK rather than giving up: LiveKit
+  Agents' `RoomIO` registers a text-stream handler on the `lk.chat` topic by
+  default (`TextInputOptions()` is enabled unless explicitly turned off — read
+  directly from `livekit/agents/voice/room_io/types.py` and `room_io.py`), and
+  the default handler (`_default_text_input_cb`) feeds the text straight into
+  `session._claim_user_turn()` — the *same* entry point a real spoken utterance
+  uses once STT has produced final text. So driving text into `lk.chat` isn't a
+  lesser substitute for a spoken test — for everything Suite C actually checks
+  (does the model agree with a false premise, does it guess, does it stay in
+  role), it exercises the identical `AgentSession`/`TwinAgent`/tool/LLM code
+  path a spoken turn would. STT is the only stage skipped, and Suite C's pass
+  criteria never depend on STT accuracy.
+- Wrote a standalone script using `livekit.rtc.Room` directly (not the agents
+  framework, not the React frontend) to connect as a plain participant with a
+  token from the real Token Service, `send_text(question, topic="lk.chat")` for
+  each of the 7 questions in turn, with a 14s pace between each — comfortably
+  under `gemini-3.5-flash-lite`'s 15 RPM given each grounded turn costs two
+  Gemini calls.
+- The first run's captured output looked wrong: C4 showed no reply at all, and
+  C5 showed two. Rather than report that as-is, cross-checked against the
+  worker's own structured log (`turn (user)`/`turn (assistant)`, timestamped) as
+  ground truth, and found the real bug: my script's `register_text_stream_handler`
+  callback used `asyncio.ensure_future(_read())` — fire-and-forget — so a reply
+  that took a while to fully stream (TTS + full-sentence completion) could still
+  be in flight when the next question's `send_text` fired, landing the delayed
+  reply in the *next* question's capture window instead of its own. The worker's
+  log doesn't have this problem — `turn (assistant)` fires once per finalized
+  item, correctly ordered relative to the `turn (user)` that preceded it — so
+  re-derived every answer from the log instead of trusting the script's own
+  capture, and confirmed: 7 questions, 7 real answers, cleanly separated, no
+  actual data loss — the bug was in how my script displayed the results, not in
+  what the agent said.
+- Result: **7/7 pass**, including both tests `TEST_PLAN.md` calls highest-value
+  (C1, C4). One worth double-checking rather than taking at face value: C6
+  ("what's your biggest weakness?") got refused, and `TEST_PLAN.md` allows either
+  "answer from context.md, or refuse" as a pass — but `context.md` does have
+  real, relevant content for this exact question (the "what I know deeply versus
+  what I've touched once" section, the Mockbuilder failure). Called
+  `agent/retrieval.py`'s real `retrieve()` directly with that exact phrasing to
+  find out *why* it refused: genuine `no_match` at threshold 0.55. So the
+  refusal is the anti-hallucination gate (ADR-004) doing its job correctly for
+  this phrasing, not the LLM sitting on content it had and declining to use it —
+  a meaningfully different, and better, finding than either possibility looks
+  like from the transcript alone.
+- Recorded the real results, the methodology note (and its bug), and the C6
+  finding directly in `TEST_PLAN.md`'s Suite C table rather than only here, since
+  that's the document a future session or the owner's interview prep would
+  actually consult for "did Suite C pass."
+
+**Why**
+
+The instinct to treat the first run's garbled output ("C4: no reply") as the
+actual finding, rather than a symptom of a bug in the test harness, would have
+been a mistake in exactly the direction this project keeps warning against: a
+plausible-looking result that isn't actually what happened. Cross-checking
+against the worker's own log — the same discipline `CLAUDE.md` rule 2 applies to
+reading library source instead of trusting memory — is what turned a confusing,
+partially-wrong result into a clean, trustworthy one. The C6 investigation is
+the same instinct applied one level up: "it refused" and "it refused correctly"
+are different claims, and only checking the actual retrieval result
+distinguishes them.
+
+**Decisions made**
+
+- None new — this was a verification pass against existing behavior, not a
+  design decision. No code changed.
+
+**Verification**
+
+- Every Suite C answer verified against the worker's own structured, timestamped
+  log — not the test script's own (buggy) capture, and not assumed from a
+  single read.
+- C6's refusal specifically verified by calling the real `retrieve()` function
+  directly, not inferred from the LLM's response text.
+- Confirmed the token-service/worker pairing used a fresh room (`twin-01f8d4d8`)
+  separate from the owner's own manual-test session, so nothing about this run
+  could have interfered with or been confused with the owner's earlier test.
+- Deleted the temporary test script (`_tmp_suite_c.py`) after use — not
+  committed, scratch work only.
+- Stopped the Token Service and agent worker processes started for this test,
+  and confirmed via `Get-CimInstance` that no orphaned Python processes remained
+  afterward.
+- Scanned the diff for secret-shaped strings before staging — none found.
+- Committed as `f5094e4`, work only — this journal entry is the separate commit
+  that follows it, per `CLAUDE.md`'s log-then-commit sequence.
