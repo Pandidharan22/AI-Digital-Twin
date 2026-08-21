@@ -176,8 +176,15 @@ Service on Render (`https://voice-twin-api-46lk.onrender.com`, via the
 separate from the shared `pyproject.toml`), frontend on Vercel
 (`https://ai-digital-twin-blue.vercel.app`), and the agent worker now on
 **Fly.io** (`agent/Dockerfile` + `fly.toml`, app `voice-twin-worker`,
-`performance-2x`/4GB dedicated CPU in `sin` — moved off the local machine
-that hosted it through the first deployment). The Fly move surfaced four
+`shared-cpu-2x`/2GB in `sin` — moved off the local machine that hosted it
+through the first deployment). Initially deployed on `performance-2x`/4GB
+(~$60-70/month) before finding the real fix below; once that landed,
+retested `shared-cpu-2x` and it works identically (~21s init, zero errors)
+at ~$11-15/month — see the 2026-08-22 journal entry. No free tier on
+Fly.io; a card on file is billed per-second. True idle-autostop isn't
+available for this worker (no `[http_service]` for Fly's proxy to gate on,
+since the worker is outbound-only) — `flyctl scale count 0`/`1` is the
+manual stop/start toggle instead. The Fly move itself surfaced four
 real bugs, each fixed and verified via a live redeploy, not assumed: (1)
 `uv sync` resolving PyPI's CUDA torch build on Linux, fixed by pinning
 torch to `download.pytorch.org/whl/cpu` as a *direct* dependency (source
