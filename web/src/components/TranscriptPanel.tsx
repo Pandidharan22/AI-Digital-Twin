@@ -23,28 +23,28 @@ export function TranscriptPanel() {
     bottomRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
   }, [lines]);
 
+  if (lines.length === 0) {
+    return <p className="transcript-empty">Nothing said yet.</p>;
+  }
+
   return (
-    <div className="transcript-panel">
-      <h2>Transcript</h2>
-      {lines.length === 0 && <p className="transcript-empty">Nothing said yet.</p>}
-      <div className="transcript-lines">
-        {lines.map((line) => {
-          const isVisitor = line.participantInfo.identity === localParticipant?.identity;
-          return (
-            <p
-              key={line.streamInfo.id}
-              className={
-                "transcript-line " +
-                (isVisitor ? "transcript-line-visitor" : "transcript-line-agent")
-              }
-            >
-              <span className="transcript-speaker">{isVisitor ? "You" : "Twin"}</span>
-              {line.text}
-            </p>
-          );
-        })}
-        <div ref={bottomRef} />
-      </div>
+    <div className="transcript-lines">
+      {lines.map((line) => {
+        const isVisitor = line.participantInfo.identity === localParticipant?.identity;
+        return (
+          <p
+            key={line.streamInfo.id}
+            className={
+              "transcript-line " +
+              (isVisitor ? "transcript-line-visitor" : "transcript-line-agent")
+            }
+          >
+            <span className="transcript-speaker">{isVisitor ? "You" : "Twin"}</span>
+            {line.text}
+          </p>
+        );
+      })}
+      <div ref={bottomRef} />
     </div>
   );
 }

@@ -1,10 +1,10 @@
 import { useEffect, useState } from "react";
-import { LiveKitRoom, RoomAudioRenderer, ControlBar } from "@livekit/components-react";
-import "@livekit/components-styles";
+import { LiveKitRoom, RoomAudioRenderer } from "@livekit/components-react";
 import { CitationsPanel } from "./components/CitationsPanel";
 import { AgentStatus } from "./components/AgentStatus";
 import { SuggestedQuestions } from "./components/SuggestedQuestions";
 import { MicPermissionNotice } from "./components/MicPermissionNotice";
+import { MicToggle } from "./components/MicToggle";
 import { TranscriptPanel } from "./components/TranscriptPanel";
 import "./App.css";
 
@@ -52,26 +52,21 @@ function App() {
       onError={(err) => setError(err.message)}
       onDisconnected={() => setConnection(null)}
     >
-      <div className="app-layout">
-        <div className="conversation-panel">
+      <div className="app-shell">
+        <header className="app-header">
           <h1>Voice Twin</h1>
           <p>Ask about Pandidharan's background, projects, or experience.</p>
+        </header>
+
+        <div className="control-row">
           <AgentStatus />
-          <MicPermissionNotice />
-          <ControlBar
-            controls={{
-              microphone: true,
-              camera: false,
-              chat: false,
-              screenShare: false,
-              leave: false,
-              settings: false,
-            }}
-          />
-          <TranscriptPanel />
-          <SuggestedQuestions />
+          <MicToggle />
         </div>
+        <MicPermissionNotice />
+
+        <TranscriptPanel />
         <CitationsPanel />
+        <SuggestedQuestions />
       </div>
       <RoomAudioRenderer />
     </LiveKitRoom>

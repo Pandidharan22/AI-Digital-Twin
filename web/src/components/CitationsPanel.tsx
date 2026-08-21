@@ -6,14 +6,17 @@ const TOPIC = "citations";
 const decoder = new TextDecoder();
 
 /**
- * Listens on the "citations" data-channel topic and renders source cards
- * keyed by turn_id, newest first.
+ * Listens on the "citations" data-channel topic and renders a compact source
+ * reference below each turn -- just what was retrieved (source + section,
+ * linked when a URL exists), never the raw chunk text. The excerpt field
+ * still travels over the wire (useful for debugging) but is deliberately not
+ * rendered; a citation here means "here's the receipt," not "here's the
+ * paragraph it was pulled from."
  *
  * FR-4.6 ("no stale cards implying grounding that doesn't exist") is
  * satisfied by never merging or accumulating sources across turns -- each
  * turn's entry renders exactly what that turn's own payload said, including
- * an empty sources[] on no_match. A no_match turn never inherits or hides
- * behind a prior turn's cards; it gets its own explicit "no source" entry.
+ * an empty sources[] on no_match.
  */
 export function CitationsPanel() {
   const [turns, setTurns] = useState<CitationPayload[]>([]);
@@ -26,42 +29,44 @@ export function CitationsPanel() {
       console.error("Malformed citations payload", err);
       return;
     }
-    setTurns((prev) => [payload, ...prev]);
+    setTurns((prev) => [...prev, payload]);
   }, []);
 
   useDataChannel(TOPIC, onMessage);
 
+  if (turns.length === 0) return null;
+
   return (
-    <aside className="citations-panel">
-      <h2>Sources</h2>
-      {turns.length === 0 && (
-        <p className="citations-empty">Ask a question to see sources here.</p>
-      )}
+    <div className="citations-feed">
       {turns.map((turn) => (
         <div key={turn.turn_id} className="citation-turn">
-          <p className="citation-query">&ldquo;{turn.query}&rdquo;</p>
           {turn.status === "no_match" || turn.sources.length === 0 ? (
-            <p className="citation-no-source">
-              No documented source for this question.
-            </p>
+            <span className="citation-no-source">No documented source</span>
           ) : (
-            <ul className="citation-cards">
-              {turn.sources.map((source) => (
-                <li key={source.id} className="citation-card">
-                  <div className="citation-card-header">
-                    <span className="citation-source">{source.source}</span>
-                    <span className="citation-score">
-                      {source.score.toFixed(2)}
-                    </span>
-                  </div>
-                  <div className="citation-section">{source.section}</div>
-                  <p className="citation-excerpt">{source.excerpt}</p>
-                </li>
-              ))}
-            </ul>
+            <div className="citation-chips">
+              {turn.sources.map((source) =>
+                source.url ? (
+                  <a
+                    key={source.id}
+                    className="citation-chip"
+                    href={source.url}
+                    target="_blank"
+                    rel="noreferrer"
+                  >
+                    {source.section}
+                    <span className="citation-chip-source">{source.source}</span>
+                  </a>
+                ) : (
+                  <span key={source.id} className="citation-chip">
+                    {source.section}
+                    <span className="citation-chip-source">{source.source}</span>
+                  </span>
+                ),
+              )}
+            </div>
           )}
         </div>
       ))}
-    </aside>
+    </div>
   );
 }
