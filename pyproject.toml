@@ -4,6 +4,7 @@ version = "0.1.0"
 description = "Cited real-time voice agent grounded in a curated document corpus, built with LiveKit"
 requires-python = ">=3.11"
 dependencies = [
+    "fastapi>=0.118.0",
     "httpx>=0.28.1",
     "livekit-agents>=1.6.10",
     "livekit-plugins-deepgram>=1.6.10",
@@ -15,4 +16,5 @@ dependencies = [
     "sentence-transformers>=6.0.0",
     "supabase>=2.31.0",
     "tiktoken>=0.14.0",
+    "uvicorn[standard]>=0.38.0",
 ]
