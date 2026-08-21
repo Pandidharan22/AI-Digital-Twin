@@ -9,11 +9,12 @@ Covers: FR-1.4, FR-1.6, FR-2.1-2.3, FR-7.2.
 
 import logging
 
-from livekit.agents import AgentServer, AgentSession, ChatMessage, JobContext
+from livekit.agents import AgentServer, AgentSession, ChatMessage, JobContext, JobProcess
 from livekit.agents.inference import TurnDetector
 from livekit.plugins import deepgram, google, silero
 
 from . import config
+from .retrieval import _match_sync
 from .twin_agent import TwinAgent
 
 logger = logging.getLogger("voice_twin.agent")
@@ -27,10 +28,30 @@ LLM_FALLBACK_MESSAGE = (
     "Please try again in a moment."
 )
 
+
+def _prewarm(proc: JobProcess) -> None:
+    """Runs once per job-runner process, before it accepts any room -- the
+    standard LiveKit Agents hook for paying one-time model-load costs up
+    front instead of on a visitor's first real turn.
+
+    LiveKit spawns a fresh process per room for isolation, so retrieval.py's
+    embedding model and Supabase client (both lazily created on first use)
+    were otherwise getting loaded during whichever turn happened to be the
+    first grounded question of the conversation -- observed live as a
+    13.79s e2e_latency spike on an otherwise-4s turn (docs/DEV_JOURNAL.md,
+    2026-08-21). Reuses retrieval.py's own sync helper -- the exact code
+    path a real query takes -- rather than duplicating the embed+RPC logic
+    here. Discarded on purpose: this is a throwaway query whose only job is
+    to warm the model cache (embed_query's @lru_cache) and the Supabase
+    connection, not to produce a usable result.
+    """
+    _match_sync("warmup")
+
+
 # CLI auto-discovery (livekit/agents/cli/discover.py) requires this exact
 # variable name -- app, server, or agent, in that priority order. See
 # docs/SDK_NOTES.md Sec4.
-server = AgentServer()
+server = AgentServer(setup_fnc=_prewarm)
 
 
 # No agent_name: a non-empty agent_name switches on "explicit dispatch," where
