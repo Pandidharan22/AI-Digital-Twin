@@ -63,7 +63,18 @@ SUPABASE_SERVICE_KEY = os.environ["SUPABASE_SERVICE_KEY"]
 # perfect separation: no threshold in the sweep eliminated every Suite B
 # false accept without costing real Suite A recall.
 RETRIEVAL_THRESHOLD = float(os.environ.get("RETRIEVAL_THRESHOLD", 0.55))
-RETRIEVAL_TOP_K = int(os.environ.get("RETRIEVAL_TOP_K", 4))
+RETRIEVAL_TOP_K = int(os.environ.get("RETRIEVAL_TOP_K", 5))
 
 # Identity -- substituted into the system prompt (CITATION_SPEC.md Sec5).
 OWNER_NAME = os.environ["OWNER_NAME"]
+
+# AgentServer's num_idle_processes defaults to 12 in production mode (the
+# "start" command, required for real room dispatch -- "console" mode's lower
+# dev default doesn't apply here). Each idle process independently loads
+# torch + bge-small-en-v1.5 + onnxruntime for the prewarm hook, which
+# crashed this machine outright (confirmed live via a MemoryError and IPC
+# initialize_process_timeout in agent/main.py's own log, 2026-08-21) at ~16GB
+# total RAM with other applications already running. 2 is enough headroom
+# for one local visitor at a time; raise this via env var once the worker
+# runs on real server hardware (Fly.io) instead of a laptop.
+WORKER_NUM_IDLE_PROCESSES = int(os.environ.get("WORKER_NUM_IDLE_PROCESSES", 2))
