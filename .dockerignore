@@ -1,0 +1,12 @@
+.venv/
+.git/
+web/
+corpus/
+tests/
+docs/
+*.md
+.env
+.env.example
+__pycache__/
+*.pyc
+.claude/

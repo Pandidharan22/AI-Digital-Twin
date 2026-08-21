@@ -1,0 +1,19 @@
+# Agent worker deployment. Not a web service -- this process connects
+# outbound to LiveKit Cloud and waits for dispatch (docs/DEPLOYMENT.md
+# Sec2). Deliberately no [http_service]/[[services]] block: this worker
+# accepts no inbound traffic, and defining one would make Fly health-check
+# a port it never opens for that purpose and kill the machine -- exactly
+# the documented anti-pattern DEPLOYMENT.md warns about.
+
+app = "voice-twin-worker"
+primary_region = "sin"
+
+[build]
+  dockerfile = "agent/Dockerfile"
+
+[[vm]]
+  size = "performance-2x"
+  memory = "4gb"
+
+[processes]
+  app = "python -m livekit.agents start agent/main.py"
