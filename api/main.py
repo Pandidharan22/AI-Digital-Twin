@@ -20,12 +20,9 @@ from . import config
 
 app = FastAPI(title="Voice Twin Token Service")
 
-# Dev-only origin by default (api/config.py); must be tightened to the real
-# deployed frontend origin before Phase 5 -- flagged there, not silently left
-# permissive.
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[config.FRONTEND_ORIGIN],
+    allow_origins=config.FRONTEND_ORIGINS,
     allow_methods=["GET", "POST"],
     allow_headers=["*"],
 )

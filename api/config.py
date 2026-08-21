@@ -18,6 +18,11 @@ LIVEKIT_URL = os.environ["LIVEKIT_URL"]
 LIVEKIT_API_KEY = os.environ["LIVEKIT_API_KEY"]
 LIVEKIT_API_SECRET = os.environ["LIVEKIT_API_SECRET"]
 
-# Dev-only default; the deployed frontend's real origin must replace this
-# before Phase 5 (see api/main.py's CORS setup).
-FRONTEND_ORIGIN = os.environ.get("FRONTEND_ORIGIN", "http://localhost:5173")
+# Comma-separated list -- lets the deployed frontend's real origin and the
+# local dev origin both work at once, rather than one replacing the other on
+# every environment switch. Whitespace around entries is stripped.
+FRONTEND_ORIGINS = [
+    origin.strip()
+    for origin in os.environ.get("FRONTEND_ORIGIN", "http://localhost:5173").split(",")
+    if origin.strip()
+]

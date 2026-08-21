@@ -1,0 +1,10 @@
+# Minimal dependency set for deploying the Token Service in isolation from
+# the agent/ingestion side of pyproject.toml, which pulls in torch and
+# sentence-transformers (100+ MB, unneeded here and unneeded to build for
+# a service that only ever mints a LiveKit JWT). Versions pinned to what's
+# verified working locally via `uv pip show`.
+fastapi==0.141.1
+uvicorn[standard]==0.52.4
+livekit-api==1.2.0
+python-dotenv==1.2.3
+pydantic==2.13.4
