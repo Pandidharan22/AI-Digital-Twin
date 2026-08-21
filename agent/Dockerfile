@@ -17,14 +17,6 @@ WORKDIR /app
 COPY pyproject.toml uv.lock ./
 RUN uv sync --frozen --no-install-project
 
-# The default PyPI Linux torch wheel bundles CUDA libraries and is 3-4x
-# larger than needed -- this project only ever runs the embedding model on
-# CPU (bge-small-en-v1.5, 384 dims; see CLAUDE.md's stack table). Swap in
-# the CPU-only build after the locked sync so uv.lock itself stays
-# untouched (and the local Windows dev environment, which already resolves
-# a CPU-only wheel on its own platform, is unaffected).
-RUN uv pip install torch --index-url https://download.pytorch.org/whl/cpu
-
 # Only the worker's actual runtime code -- not ingestion/'s loaders,
 # chunker, or offline scripts, which this process never imports (confirmed
 # by reading agent/retrieval.py's own import: just ingestion.embedder).
