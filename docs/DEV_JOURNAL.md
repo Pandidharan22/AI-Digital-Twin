@@ -3009,3 +3009,103 @@ separate source of truth to keep in sync.
 - `read_console_messages` (errors only) — none, at both checkpoints.
 - Scanned the diff for secret-shaped strings before staging — none found.
 - Committed as `0867b43`, work only.
+
+---
+
+## 2026-08-21 — Phase 4: UI redesign after first look at the live deployment
+
+**What happened**
+
+- Owner tried the live deployment and pushed back on four specific things,
+  each fixed:
+  1. **Sources panel took half the screen.** `App.tsx`'s layout was a
+     two-column `flex` split (`conversation-panel` / `citations-panel`),
+     each `flex: 1`. Replaced with a single centered column
+     (`app-shell`, `max-width: 720px`); `CitationsPanel` now renders as a
+     compact row directly under the transcript instead of beside it.
+  2. **Citation cards dumped the full retrieved excerpt.** `CitationsPanel`
+     no longer renders `excerpt` or `score` at all — each source is now a
+     small pill showing just `section` + `source`, matching what the owner
+     asked for ("Header like 'Education Section - Resume'"). When the
+     retrieved chunk carries a `source_url` (GitHub-sourced chunks do;
+     resume/`context.md` chunks don't), the chip becomes a real `<a href>`
+     instead of plain text — verified both cases render correctly by
+     publishing real payloads via `livekit.api.LiveKitAPI().room.send_data`
+     directly into the active local room (same technique used earlier in
+     Phase 3 Day 4's citations verification), including a `no_match` payload
+     to confirm that path still renders as a small "No documented source"
+     line rather than nothing.
+  3. **Transcript sat in a boxed card that visually fought the page.**
+     `TranscriptPanel.tsx` dropped its `<div className="transcript-panel">`
+     wrapper (border, background, padding, its own `<h2>`) — the lines now
+     flow directly into the page. The bigger part of why it looked "boxy"
+     turned out to be `App.css` using hardcoded light-only hex colors
+     (`#f4f3ec`, `#ddd`, `#666`, etc.) laid on top of a page that was
+     actually rendering in dark mode via `index.css`'s existing
+     `--bg`/`--text`/`--border`/`--accent` theme variables (already defined
+     for both light and dark there, just never used by `App.css`). Rewrote
+     every color in `App.css` to reference those variables instead, so the
+     transcript and chips now follow the same theme the rest of the page
+     already does automatically.
+  4. **Agent-status pill and the mic control were oversized.** The status
+     pill's font/padding were cut down and it now sits inline next to the
+     mic control instead of stacked full-width. The mic control itself was
+     `@livekit/components-react`'s `ControlBar` prefab, which pulls in
+     `@livekit/components-styles` and renders a whole toolbar's worth of
+     default sizing for what this page only ever needed as one button.
+     Replaced with a new `MicToggle.tsx` — a single small pill built
+     directly on `useLocalParticipant()`'s `isMicrophoneEnabled` /
+     `setMicrophoneEnabled` — and dropped the `components-styles` import
+     entirely, now genuinely unused. Cut the shipped CSS bundle from 23.7kB
+     to 5.2kB as a direct, measured side effect, not just a visual change.
+- Owner asked explicitly not to push this round — committed locally only,
+  for them to review against the running local dev server first.
+
+**Why**
+
+The half-screen citations panel and the excerpt dump were both leftovers
+from Phase 3 Day 4's citations-panel work, which was explicitly built to
+prove the data-channel contract worked (FR-4.6), not to be a finished
+design — `BUILD_PLAN.md` Phase 4 was always going to own the real visual
+pass, and this session is that pass. The theme-variable fix is worth
+noting separately from the others: it wasn't a new color choice, it was
+using color tokens that already existed in the codebase (`index.css`,
+untouched since the original scaffold) instead of a second, disconnected
+set of hardcoded ones `App.css` had been using since Day 4 — the
+dark-mode clash the owner saw in their screenshot was that gap made
+visible, not a missing feature.
+
+**Decisions made**
+
+- Citation chips permanently omit `excerpt` and `score` from the UI. Both
+  fields still travel over the wire in the `citations` payload (unchanged on
+  the backend) since they're useful for debugging and could resurface in a
+  detail view later, but the default rendering is header-only from here on.
+- `ControlBar` and `@livekit/components-styles` are no longer used anywhere
+  in `web/` — any future prefab UI from `@livekit/components-react` should
+  be re-evaluated against `MicToggle.tsx`'s much smaller custom-component
+  approach rather than reflexively reaching for the next prefab.
+- Sources render as one compact row per turn, positioned below the whole
+  transcript feed rather than interleaved line-by-line under each specific
+  agent reply — a deliberate scope cut given the two are separate LiveKit
+  primitives on separate topics (`lk.transcription` vs `citations`) with no
+  shared ordering guarantee cheap to merge correctly. Flagged as a possible
+  future refinement, not implemented tonight.
+
+**Verification**
+
+- `npm run build` — clean, zero type errors; CSS bundle confirmed shrunk
+  from 23.7kB to 5.2kB via the build output itself, not estimated.
+- Live-reloaded the local dev server against the real running worker and
+  Token Service — confirmed the compact status/mic row, the blended
+  (unboxed) transcript, and the real spoken greeting all render correctly
+  via `get_page_text` and `read_page`, zero console errors.
+- Published two real citation payloads (one `match` with a plain-text chip
+  and a linked chip, one `no_match`) directly into the live local room via
+  `livekit.api.LiveKitAPI().room.send_data(...)` and confirmed via
+  `read_page`'s accessibility tree that the GitHub-sourced chip rendered as
+  an actual `<a href="https://github.com/...">` element and the plain
+  resume-sourced chip did not — not inferred from the payload shape alone.
+- Scanned the diff for secret-shaped strings before staging — none found.
+- Committed as `c94eb15`, work only, **not pushed** per explicit instruction
+  — owner wants to review locally first.
