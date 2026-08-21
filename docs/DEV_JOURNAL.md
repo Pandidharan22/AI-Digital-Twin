@@ -2949,3 +2949,63 @@ cold" requirement is asking for.
   pre-submission checklist and Sec4's mandatory cold-start test): the 30-minute-idle-then-cold-open test, moving the worker off the owner's laptop
   to Fly.io, the GitHub Actions ingestion cron, and mobile-Safari/cellular
   verification. Tracked in `CLAUDE.md`'s current-status section, not lost.
+
+---
+
+## 2026-08-21 — Phase 4: Transcript panel (FR-5.1)
+
+**What happened**
+
+- Owner asked for a running text transcript of both sides of the
+  conversation, in the same style as LiveKit's own Agent Console/Playground.
+  Checked whether `@livekit/components-react` (already installed, `2.9.24`)
+  provides this before writing anything custom, per `CLAUDE.md` rule #2's
+  general instinct of reading the installed package rather than assuming —
+  it does: `useTranscriptions()`, a real exported hook (`components-core`'s
+  `TextStreamData[]`). `AgentSession` already publishes both the visitor's
+  STT output and the agent's TTS-aligned text as text-stream segments on the
+  `lk.transcription` topic automatically — the exact mechanism the Console's
+  own transcript view is built on. No agent-side code changed at all; this
+  was a frontend-only addition.
+- Added `TranscriptPanel.tsx`: sorts the hook's stream data by
+  `streamInfo.timestamp`, labels each line "You" or "Twin" by comparing
+  `participantInfo.identity` against the local participant's own identity
+  (from `useLocalParticipant()`), and auto-scrolls to the latest line.
+  React-keyed by `streamInfo.id` — LiveKit assigns one stable id per
+  utterance segment and updates the same id's text in place as it grows from
+  partial to final, so no manual dedup logic was needed; the hook already
+  hands back one current entry per id.
+- Wired into `App.tsx` between the `ControlBar` and `SuggestedQuestions`, and
+  styled as speaker-colored, right/left-aligned bubbles (visitor right,
+  agent left) inside a scrollable, fixed-height container.
+
+**Why**
+
+Checking the installed library before building anything custom mattered
+concretely here: a hand-rolled version would have meant either polling
+`ChatMessage`/text-stream primitives directly and reimplementing partial-vs-
+final segment merging, or (worse) piping the agent's replies through a
+second, separate channel that could drift from what was actually spoken.
+Using the same hook the Console itself uses guarantees this transcript shows
+exactly what LiveKit's own tooling would show for the identical room — no
+separate source of truth to keep in sync.
+
+**Decisions made**
+
+- Transcript rendering is entirely client-side, sourced from LiveKit's own
+  text-stream primitive — no new backend endpoint, no new data-channel topic,
+  and no change to `agent/citations.py` or any other worker code.
+
+**Verification**
+
+- `npm run build` — clean, zero type errors.
+- Live run against the real deployed worker (not mocked): watched the
+  greeting appear as a single growing line ("Hi, I am Pandidharan Gopiraj's
+  voice twin, and") that settled into one complete, non-duplicated final line
+  ("...I am glad you are here. Feel free to ask me anything about my
+  background and experience.") as the agent-status pill correctly moved
+  `Speaking…` → `Listening…` — confirmed via `get_page_text` at two points in
+  time, not assumed from the build succeeding.
+- `read_console_messages` (errors only) — none, at both checkpoints.
+- Scanned the diff for secret-shaped strings before staging — none found.
+- Committed as `0867b43`, work only.
