@@ -2,6 +2,9 @@ import { useEffect, useState } from "react";
 import { LiveKitRoom, RoomAudioRenderer, ControlBar } from "@livekit/components-react";
 import "@livekit/components-styles";
 import { CitationsPanel } from "./components/CitationsPanel";
+import { AgentStatus } from "./components/AgentStatus";
+import { SuggestedQuestions } from "./components/SuggestedQuestions";
+import { MicPermissionNotice } from "./components/MicPermissionNotice";
 import "./App.css";
 
 interface TokenResponse {
@@ -28,7 +31,13 @@ function App() {
   }, []);
 
   if (error) {
-    return <div className="status-message">Couldn't connect: {error}</div>;
+    return (
+      <div className="status-message status-message-error">
+        <p>Couldn't connect: {error}</p>
+        <p>Try reloading the page. If it keeps failing, the service may be waking up
+          from idle — wait a few seconds and try again.</p>
+      </div>
+    );
   }
 
   if (!connection) {
@@ -46,6 +55,8 @@ function App() {
         <div className="conversation-panel">
           <h1>Voice Twin</h1>
           <p>Ask about Pandidharan's background, projects, or experience.</p>
+          <AgentStatus />
+          <MicPermissionNotice />
           <ControlBar
             controls={{
               microphone: true,
@@ -56,6 +67,7 @@ function App() {
               settings: false,
             }}
           />
+          <SuggestedQuestions />
         </div>
         <CitationsPanel />
       </div>

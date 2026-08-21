@@ -1,10 +1,100 @@
-/* Deliberately minimal -- no visual polish. Phase 4 (BUILD_PLAN.md) owns
-   connection-state UI, mic-permission explainer, transcript panel, mobile
-   layout, and real card styling. This is just enough to be usable. */
+/* Transcript panel and full mobile/card polish are still open (BUILD_PLAN.md
+   Phase 4 items 3 and 6) -- connection states, mic flow, and suggested
+   questions are covered below. */
 
 .status-message {
   padding: 2rem;
   font-family: sans-serif;
+}
+
+.status-message-error {
+  color: #b91c1c;
+}
+
+.agent-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin: 0.75rem 0;
+  padding: 0.4rem 0.8rem;
+  border-radius: 999px;
+  background: #f4f3ec;
+  font-size: 0.9rem;
+}
+
+.agent-status-error {
+  background: #fee2e2;
+  color: #b91c1c;
+}
+
+.agent-status-dot {
+  width: 0.5rem;
+  height: 0.5rem;
+  border-radius: 50%;
+  background: #999;
+}
+
+.agent-status-dot-listening,
+.agent-status-dot-idle {
+  background: #16a34a;
+}
+
+.agent-status-dot-thinking,
+.agent-status-dot-initializing,
+.agent-status-dot-connecting,
+.agent-status-dot-pre-connect-buffering {
+  background: #d97706;
+  animation: pulse 1.2s ease-in-out infinite;
+}
+
+.agent-status-dot-speaking {
+  background: #2563eb;
+  animation: pulse 0.6s ease-in-out infinite;
+}
+
+.agent-status-dot-failed,
+.agent-status-dot-disconnected {
+  background: #b91c1c;
+}
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.35; }
+}
+
+.mic-explainer {
+  font-size: 0.85rem;
+  color: #666;
+  margin: 0.5rem 0;
+}
+
+.mic-explainer-error {
+  color: #b91c1c;
+  font-weight: 600;
+}
+
+.suggested-questions {
+  margin-top: 1.5rem;
+}
+
+.suggested-questions h2 {
+  font-size: 1rem;
+  margin-bottom: 0.5rem;
+}
+
+.suggested-questions ul {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+
+.suggested-questions li {
+  font-size: 0.9rem;
+  color: #444;
+  font-style: italic;
 }
 
 .app-layout {
