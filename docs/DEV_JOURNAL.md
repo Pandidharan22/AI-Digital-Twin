@@ -3458,3 +3458,92 @@ been read closely enough to notice it was a network wait, not compute.
 - Committed as `dd79f08` (torch CPU pin), `d151998` (Dockerfile + fly.toml),
   `1f12dac` (Dockerfile cleanup), `935c771` (timeout config) — each a
   separate work commit per protocol.
+
+---
+
+## 2026-08-22 — Phase 5: Fly.io VM downgrade — dedicated CPU wasn't the fix
+
+**What happened**
+
+- Owner asked directly whether Fly.io actually bills, having only added a
+  card during account creation without seeing a price anywhere. Checked
+  Fly's real pricing docs live (`fly.io/docs/about/pricing/`) rather than
+  answer from memory or reassure without checking: **no free tier**, a card
+  on file is required for every account, billing is per-second, and
+  `performance-2x`/4GB was running ~$60–70/month continuously — a real,
+  ongoing cost that should have been priced out *before* deploying it, not
+  discovered after.
+- Owner asked to combine two mitigations: downgrade to a cheaper VM class,
+  and add auto-stop-when-idle. Checked Fly's own autostop/autostart docs
+  before configuring anything, rather than writing a `fly.toml` block that
+  might silently not work: **autostop requires an `[http_service]` block**
+  so Fly's proxy has traffic to watch. This worker has none by design (it's
+  outbound-only, connects to LiveKit Cloud, never accepts inbound
+  connections — see the original Dockerfile/fly.toml entry) — there is
+  nothing for Fly's proxy-based autostop to gate on, and building a custom
+  idle-exit would mean the worker is unregistered (and so undispatchable)
+  exactly while "waiting to be needed," reintroducing the same
+  nobody-joins-the-room failure mode Phase 5 already spent a full session
+  fixing. Reported this limitation honestly instead of configuring
+  something that would have looked correct in `fly.toml` but done nothing.
+- The downgrade half was worth retesting for a real reason, not just cost:
+  every prior `shared-cpu-2x` failure in this file's own history happened
+  *before* the actual root cause (the Hugging Face Hub network call) was
+  fixed. The escalation to `performance-2x` happened mid-debugging, before
+  that fix landed — so dedicated CPU was never actually proven necessary on
+  its own merits, just correlated with the moment things started working.
+  Downgraded `fly.toml` back to `shared-cpu-2x`/2GB and redeployed to find
+  out for real.
+- **Confirmed live: shared CPU works fine now.** `process initialized` at
+  21.53s — statistically the same as dedicated CPU's ~20s, well inside the
+  30s timeout, zero errors, zero HF Hub warnings. Re-verified end-to-end
+  through the real production URL (`Connecting…` → `Speaking…`, real
+  greeting text, zero console errors) before calling it done.
+- Looked up real `shared-cpu-2x`/2GB pricing the same way (Fly's docs, not
+  memory): roughly $11–15/month continuous, vs. `performance-2x`/4GB's
+  $60–70/month — a 5–6x cost cut for identical observed reliability.
+- Since true idle autostop isn't available, gave the owner the honest
+  fallback instead: `flyctl scale count 0` / `scale count 1` as a manual
+  stop-before/start-before-a-session toggle — zero cost while stopped, ~20s
+  to register again before it can take a visitor.
+
+**Why**
+
+Both parts of this entry are the same lesson from opposite directions: the
+first (checking real pricing before answering "does it bill me") is
+verifying a claim about money before making it, the same standard `CLAUDE.md`
+holds for technical claims. The second (checking Fly's actual autostop
+mechanics before configuring it) is the inverse mistake avoided —
+implementing something that *looks* like it solves the ask without
+confirming it actually would have, which would have been worse than
+reporting the limitation, since a `fly.toml` block that quietly does
+nothing reads as "handled" until the next bill arrives.
+
+**Decisions made**
+
+- `shared-cpu-2x`/2GB is the worker's VM size going forward, not
+  `performance-2x` — the earlier entry's "this has real ongoing billing
+  cost" framing is now `docs/DEV_JOURNAL.md`'s own outdated 2026-08-21
+  reasoning superseded by same-day retesting, not erased, per this
+  journal's own standing convention of annotating reversed decisions rather
+  than rewriting history.
+- No automatic idle-stop is configured or planned for this worker shape.
+  Documented as a real architectural limitation (no inbound traffic for
+  Fly's proxy to watch), not a TODO — a genuine fix would require
+  application-level self-management that trades away exactly the
+  reliability Phase 5 was built around.
+
+**Verification**
+
+- Fly's real pricing and autostop documentation fetched and read directly
+  (`fly.io/docs/about/pricing/`, `fly.io/docs/launch/autostop-autostart/`)
+  before making any claim to the owner about cost or configuring any new
+  `fly.toml` behavior — not answered from training-data recall of Fly's
+  pricing model, which changes over time.
+- Live redeploy on `shared-cpu-2x`/2GB: `flyctl logs` showing
+  `process initialized` in 21.53s with zero errors, then a full browser
+  session against the real production URL confirming `Connecting…` →
+  `Speaking…` with the actual greeting text and zero console errors.
+- Scanned the diff for secret-shaped strings before staging — none found
+  (a one-line VM-size/memory change).
+- Committed as `79a31da`, work only.
