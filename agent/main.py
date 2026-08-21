@@ -4,7 +4,7 @@ Registers the LiveKit Agents worker, builds the AgentSession (STT -> LLM -> TTS
 pipeline with VAD and turn detection), and dispatches TwinAgent into each room
 automatically on visitor connection. Delivers the spoken greeting on join.
 
-Covers: FR-1.4, FR-1.6, FR-2.1-2.3.
+Covers: FR-1.4, FR-1.6, FR-2.1-2.3, FR-7.2.
 """
 
 import logging
@@ -17,6 +17,15 @@ from . import config
 from .twin_agent import TwinAgent
 
 logger = logging.getLogger("voice_twin.agent")
+
+# FR-7.2: spoken when the LLM's own retry budget (livekit-plugins-google's
+# built-in backoff -- FR-7.1) is exhausted, so a rate limit or outage reads as
+# an apology, not a silent drop back to "listening". Plain speakable text,
+# same voice rules as everything else that reaches TTS.
+LLM_FALLBACK_MESSAGE = (
+    "Sorry, I'm having trouble reaching my language model right now. "
+    "Please try again in a moment."
+)
 
 # CLI auto-discovery (livekit/agents/cli/discover.py) requires this exact
 # variable name -- app, server, or agent, in that priority order. See
@@ -57,6 +66,28 @@ async def entrypoint(ctx: JobContext) -> None:
     def _on_transcript(ev) -> None:
         if ev.is_final:
             logger.info("[room=%s] transcript (final): %r", ctx.room.name, ev.transcript)
+
+    @session.on("error")
+    def _on_error(ev) -> None:
+        # ev.error.recoverable is False only on the LLMError emitted right
+        # before the framework gives up on a generation attempt (see
+        # livekit/agents/llm/llm.py's _main_task: every retried attempt emits
+        # recoverable=True first, and only the final, exhausted attempt emits
+        # recoverable=False) -- so this fires once per genuinely failed turn,
+        # not once per retry. AgentSession itself only force-closes the
+        # session after 3 consecutive unrecoverable errors (its own
+        # max_unrecoverable_errors default); below that it does nothing user-
+        # facing on its own, which is the exact silent-hang gap a live 429
+        # exposed (docs/DEV_JOURNAL.md, 2026-08-20). FR-7.3 (vector store
+        # unavailability) and FR-7.4 (structured stage-failure logging) are
+        # separate requirements, not covered by this handler.
+        if ev.error.type == "llm_error" and not ev.error.recoverable:
+            logger.error(
+                "[room=%s] LLM retries exhausted, speaking fallback: %s",
+                ctx.room.name,
+                ev.error.error,
+            )
+            session.say(LLM_FALLBACK_MESSAGE)
 
     @session.on("conversation_item_added")
     def _on_conversation_item(ev) -> None:
