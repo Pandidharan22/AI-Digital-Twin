@@ -1,11 +1,23 @@
 name: Keep token API warm
 
 # Render's free tier sleeps a web service after ~15 min with no inbound
-# traffic; the first request after that pays a 10-30s cold start, which a
-# real visitor reads as "broken", not "loading" (docs/DEPLOYMENT.md Sec4).
-# Pinging /health every 10 minutes keeps it inside that window with a
-# comfortable margin, since GitHub Actions' own schedule trigger doesn't
-# fire at exact wall-clock times under load.
+# traffic; the first request after that pays a real cold-start cost, which
+# a real visitor reads as "broken", not "loading" (docs/DEPLOYMENT.md
+# Sec4). Pinging /health every 10 minutes is meant to keep it inside that
+# window, but GitHub's own schedule trigger doesn't fire at exact
+# wall-clock times -- ticks get delayed or occasionally skipped under
+# GitHub-wide load, confirmed live (2026-08-22): two runs landed after a
+# 25-31 min gap instead of 10, long enough for Render to have gone back to
+# sleep. When that happens the ping itself becomes a genuine cold-start
+# request, which measured 60-90s live that same night -- so a 30s timeout
+# was failing the exact runs that mattered most (the ones actually waking
+# a sleeping instance back up). --retry lets a single ping absorb that: if
+# the first attempt times out mid-cold-start, curl retries into the
+# now-warming instance instead of the whole job just failing. Written as an
+# explicit loop rather than curl's own --retry: --retry's interaction with
+# --max-time (whether the time budget is per-attempt or shared across
+# retries) isn't something to guess at for a step whose only job is not
+# silently no-oping -- an explicit per-attempt timeout is unambiguous.
 on:
   schedule:
     - cron: "*/10 * * * *"
@@ -17,4 +29,10 @@ jobs:
     steps:
       - name: Ping token API health endpoint
         run: |
-          curl -fsS --max-time 30 https://voice-twin-api-46lk.onrender.com/health
+          for attempt in 1 2; do
+            if curl -fsS --max-time 100 https://voice-twin-api-46lk.onrender.com/health; then
+              exit 0
+            fi
+            echo "Attempt $attempt failed, retrying..."
+          done
+          exit 1
