@@ -176,12 +176,16 @@ Service on Render (`https://voice-twin-api-46lk.onrender.com`, via the
 separate from the shared `pyproject.toml`), frontend on Vercel
 (`https://ai-digital-twin-blue.vercel.app`), and the agent worker now on
 **Fly.io** (`agent/Dockerfile` + `fly.toml`, app `voice-twin-worker`,
-`shared-cpu-2x`/2GB in `sin` — moved off the local machine that hosted it
-through the first deployment). Initially deployed on `performance-2x`/4GB
-(~$60-70/month) before finding the real fix below; once that landed,
-retested `shared-cpu-2x` and it works identically (~21s init, zero errors)
-at ~$11-15/month — see the 2026-08-22 journal entry. No free tier on
-Fly.io; a card on file is billed per-second. True idle-autostop isn't
+`performance-2x`/4GB (dedicated CPU) in `sin` — moved off the local machine
+that hosted it through the first deployment. Briefly downgraded to
+`shared-cpu-2x`/2GB (~$11-15/month vs. `performance-2x`'s ~$60-70/month)
+after a clean test, then reverted the same day when it regressed live in
+production with the exact same timeout failure it had before — a shared
+VM's performance depends on other tenants on the same host, so one passing
+test wasn't proof of reliability. Settled on `performance-2x` for good; see
+the 2026-08-22 journal entries for both the downgrade attempt and the
+revert. No free tier on Fly.io; a card on file is billed per-second. True
+idle-autostop isn't
 available for this worker (no `[http_service]` for Fly's proxy to gate on,
 since the worker is outbound-only) — `flyctl scale count 0`/`1` is the
 manual stop/start toggle instead. The Fly move itself surfaced four
@@ -200,11 +204,26 @@ in `docs/DEV_JOURNAL.md`'s 2026-08-21/22 entry. Earlier in Phase 5: Vercel's
 Deployment Protection was found silently gating the "public" link behind a
 Vercel login; disabled and re-verified.
 
+**Render token API cold-start is now mitigated**: `.github/workflows/keep-warm.yml`
+pings `/health` every 10 minutes (GitHub Actions `schedule` + `workflow_dispatch`),
+per `docs/DEPLOYMENT.md` Sec4's own prescription — implemented and verified live
+(2026-08-22) after the owner hit an uncovered case: Render's free tier had
+spun down, cold start took ~60-90s (worse than the doc's 10-30s estimate),
+compounding with that session's `shared-cpu-2x` regression above. A separate,
+real finding from that same incident: DNS lookups for `onrender.com` were
+returning wrong answers on the owner's local network even against an explicit
+`8.8.8.8` query — confirmed local-network-specific (likely router/ISP-level
+filtering), not a Render problem, and left for the owner to resolve since it's
+outside this session's reach.
+
 Still open before Phase 5's exit criteria are fully met: the
-30-minute-idle-then-cold-open test, mobile Safari/cellular verification, the
-GitHub Actions ingestion cron, and confirming zero secrets in the frontend
-bundle by inspection (spot-checked once already during the first deployment,
-not re-verified since).
+30-minute-idle-then-cold-open test (now easier to re-verify with the keep-warm
+cron in place — worth confirming it actually prevents the sleep, not just
+assuming), mobile Safari/cellular verification, the GitHub Actions **ingestion**
+cron (distinct from the keep-warm cron above — refreshes the corpus from
+GitHub, not yet built), and confirming zero secrets in the frontend bundle by
+inspection (spot-checked once already during the first deployment, not
+re-verified since).
 
 **Blocked by:** Nothing functionally. Open items: (1)/(2) the Phase 1 latency (LLM
 TTFT ~2.5s avg, one 7s spike) and barge-in timing (~455ms) numbers are still
