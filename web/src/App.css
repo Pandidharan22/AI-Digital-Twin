@@ -128,6 +128,19 @@
   background: var(--accent);
 }
 
+/* The mic button is the entire interaction model of this app -- the only
+   thing a visitor ever taps. Desktop's compact 33px-tall pill (deliberately
+   small next to ControlBar's default sizing, per MicToggle.tsx) is below
+   the 44px comfortable touch-target guideline (Apple HIG / WCAG 2.5.5), so
+   phones get a larger tap target without changing the desktop design. */
+@media (max-width: 480px) {
+  .mic-toggle {
+    min-height: 44px;
+    padding: 0.5rem 1rem;
+    font-size: 0.85rem;
+  }
+}
+
 .mic-explainer {
   font-size: 0.78rem;
   color: var(--text);
