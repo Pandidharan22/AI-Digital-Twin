@@ -234,15 +234,22 @@ GitHub, not yet built), and confirming zero secrets in the frontend bundle by
 inspection (spot-checked once already during the first deployment, not
 re-verified since).
 
-**Blocked by:** Nothing functionally. Open items: (1)/(2) the Phase 1 latency (LLM
-TTFT ~2.5s avg, one 7s spike) and barge-in timing (~455ms) numbers are still
-unrevisited since Phase 1; (3) `CITATION_SPEC.md` §7's literal first demo
-question ("What's your most recent role?") still fails to retrieve the
-Freelance experience chunk in the top-4 at every threshold tested
-(0.50–0.65) — worked around in the UI by using `TEST_PLAN.md`'s A2 phrasing
-instead (2026-08-21), but the underlying retrieval-ranking gap itself is
-still unfixed and still needs its own investigation before final submission;
-(4) `bge-small-en-v1.5` has a real, demonstrated weakness anchoring on short
+**Blocked by:** Nothing functionally. Open items: (1) the Phase 1 barge-in
+timing (~455ms) number is still unrevisited since Phase 1 — see (2a) below for
+the LLM-latency half, which is no longer stale; (2a) NFR-1's LLM-latency
+numbers are now real and current (2026-08-22, superseding the stale Phase 1
+figures): `llm_ttft` median 1066ms/p95 1276ms across a real 20-turn production
+run — see `docs/TEST_PLAN.md` Sec3. Total end-to-end and STT-stage numbers are
+still unmeasured (need a real voice pass, not text input); (3) **fixed
+(2026-08-22)** — `CITATION_SPEC.md` §7's literal first demo question ("Tell me
+about your most recent role") previously failed to retrieve the Freelance
+experience chunk in the top-4 at every threshold tested (0.50–0.65); root
+cause was the chunk's own text never stating it was the most recent role, now
+fixed in `ingestion/loaders/pdf_loader.py` and reverified at rank 0 — see
+`docs/DEV_JOURNAL.md`'s 2026-08-22 entry. The frontend's suggested-question
+workaround (`TEST_PLAN.md`'s A2 phrasing) has been reverted back to the
+original spec wording, committed but **not yet pushed to Vercel** — ask before
+pushing; (4) `bge-small-en-v1.5` has a real, demonstrated weakness anchoring on short
 acronyms/numbers inside longer passages (the CGPA spot-check) — hybrid search
 compensates for that specific case, but the threshold sweep also surfaced a
 *different* weakness class: coincidental vocabulary-proximity false positives

@@ -3801,3 +3801,143 @@ instance instead of the stable one.
 - No deploy involved and none needed — this added local tooling and a docs
   update; nothing in `agent/`, `api/`, or `web/` changed, so the currently
   running production worker and frontend are unaffected either way.
+
+---
+
+## 2026-08-22 — Fixed the Suite A1 retrieval-ranking gap (root cause, not a workaround)
+
+**What happened**
+
+Picked up the next to-do item: the known gap where "What's your most recent
+role?" — `CITATION_SPEC.md` Sec7's literal first demo question — fails to
+rank the Freelance experience chunk in the top-4 at any threshold from 0.50
+to 0.65, worked around since 2026-08-21 by swapping the frontend's demo
+question rather than fixing the retrieval. Diagnosed before touching
+anything, per `CLAUDE.md`'s "diagnose before fixing":
+
+- Queried the live corpus directly at `match_threshold=0.0`, `match_count=30`
+  for "What is your most recent role?" to see the *entire* ranked list, not
+  just the top-4 the app would normally see. The Freelance chunk didn't rank
+  1st, 2nd, or even 5th — it came in at **rank 12, score 0.5156**, well
+  behind five different `Job-Hunt-AI` GitHub README chunks and two
+  `context.md` sections (`What I'm looking for`, `What I'm working on right
+  now`), all scoring 0.53–0.62.
+- Pulled the actual stored chunk text directly from Postgres rather than
+  guessing at what might be wrong with it: *"Freelance Software Developer
+  Built client-facing production web experiences and applied AI systems,
+  translating architecture design into deployable solutions. Collaborated
+  directly with stakeholders to translate requirements into working systems
+  under short delivery cycles."* — a real root cause, visible immediately
+  once the actual text was in front of me: nothing in it says this *is* the
+  most recent role. It reads as a generic duty description. A query built
+  entirely around recency ("most recent") has no word or concept in that
+  text to anchor to, so it loses on pure semantic similarity to unrelated
+  chunks that happen to use current-status language for a different reason
+  (describing an active side project, or a "what I'm looking for" answer).
+  This confirms `TEST_PLAN.md`'s own 2026-08-21 suspicion — "not a threshold
+  problem, a ranking one" — with an actual mechanism, not just a threshold
+  sweep's absence of a fix.
+
+**The fix**
+
+- One targeted change in `ingestion/loaders/pdf_loader.py`, the same file
+  and the same "tuned to this one real document, not a generic parser"
+  philosophy it was already built on: prepended `"Most recent role:
+  Freelance Software Developer. "` to the chunk's text, and renamed its
+  section from `"Experience — Freelance Software Developer"` to `"Most
+  Recent Role — Freelance Software Developer"` (which also feeds into
+  `chunker.py`'s `embed_text` contextual prefix, so the framing lands in the
+  embedded string twice — once in the section header, once in the body).
+  Checked first that this is actually true, not just retrieval-convenient:
+  `SECTION_HEADERS` shows Experience/Freelance is the resume's *only*
+  experience entry, so "most recent role" and "only role" are the same
+  fact here — stating it plainly is accurate, not embedding-gaming.
+- Re-ran `uv run python -m ingestion.ingest` against the real, live Supabase
+  project — same one the deployed agent queries at runtime. The idempotent
+  upsert-by-content-hash + delete-stale-per-source logic already in
+  `ingest.py` (built back in Phase 2) did exactly what it was designed to
+  do here without any special-casing: inserted the new chunk under its new
+  hash, deleted the 1 old row whose hash no longer appeared. `Upserted 51
+  chunks... Deleted 1 stale rows.`
+
+**Verified, not assumed**
+
+- Re-queried the live corpus for both phrasings ("What is your most recent
+  role?" and "What's your most recent role?") — the Freelance chunk now
+  ranks **#0, score 0.70–0.71**, comfortably ahead of the next result
+  (`Job-Hunt-AI` Overview, 0.62).
+- Also checked the exact literal `CITATION_SPEC.md` Sec7 wording, "Tell me
+  about your most recent role." (not identical to either TEST_PLAN.md
+  phrasing) — also rank 0, score 0.66 — since that's the actual string the
+  frontend needed to work, not just the TEST_PLAN.md variants.
+- Ran `ingestion/validate.py`'s full structural + spot-check suite:
+  structural PASS (51 chunks, no floor/ceiling/null/duplicate/dimension
+  issues). Of the 5 spot-checks, 4 passed; the pre-existing CGPA spot-check
+  failure is the same already-documented `bge-small-en-v1.5`
+  short-acronym/number weakness `CLAUDE.md` already tracks as open (item 4)
+  — confirmed unrelated to this change by inspecting its own top result,
+  which has nothing to do with the Freelance chunk.
+- Ran `ingestion/tune_threshold.py`'s full Suite A (13) / Suite B (7) sweep
+  across all 8 threshold candidates: at the currently deployed threshold
+  (0.55), Suite A went from **9/13 to 10/13** correct, Suite B unchanged at
+  1/7 false accepts (the same documented salary/Loan-Eligibility-README
+  vocabulary-proximity anomaly from Phase 3, untouched by this fix). No
+  other question in either suite moved — the fix was targeted, not a
+  side-effecting reshuffle of the whole ranking.
+- Reverted `web/src/components/SuggestedQuestions.tsx`'s question 1 from the
+  2026-08-21 workaround phrasing back to `CITATION_SPEC.md` Sec7's original
+  literal wording, now that it's verified to retrieve correctly — the
+  workaround's whole reason to exist is gone. Ran `npx tsc --noEmit` in
+  `web/` afterward — clean, no type errors from the one-line string swap.
+- Scanned `ingestion/loaders/pdf_loader.py`, `web/src/components/
+  SuggestedQuestions.tsx`, and the `TEST_PLAN.md` diff for secret-shaped
+  strings before staging — none found (expected; no credentials touched).
+- `git status --short` after staging → exactly the three intended files.
+
+**Why**
+
+The 2026-08-21 workaround (swap the demo question) was a reasonable
+stopgap under Phase 3 Day 4's time pressure, but it left the actual defect
+in place — anyone asking the literal, spec-intended question during a real
+evaluation would still have hit it. Root-causing it instead of re-tuning
+the threshold again matters because the earlier sweep had already shown
+threshold changes can't fix this: a chunk sitting at rank 12 needs to move
+up the ranking, not be caught by a lower bar that would also let more
+Suite B false accepts through. Reading the actual stored chunk text before
+forming a hypothesis — rather than guessing at "maybe it's a stopword
+issue" or "maybe the model's just bad at this" — is what turned a vague
+"ranking gap" into a specific, fixable, one-line-of-context problem.
+
+**Decisions made**
+
+- The Freelance chunk's section is now permanently `"Most Recent Role —
+  Freelance Software Developer"` — this also changes its citation label in
+  `CitationsPanel.tsx` (which renders `source.section` verbatim for
+  `source_type: "resume"`), which reads better to an evaluator anyway
+  ("Most Recent Role" is more informative than "Experience").
+  Re-ingestion must be re-run any time a resume section header changes
+  going forward, since the section label is baked into a new
+  `content_hash`; unglamorous but already handled correctly by the existing
+  idempotent-delete logic, not something to re-solve later.
+- Did not touch `RETRIEVAL_THRESHOLD` (stays 0.55) — this fix improved
+  Suite A's numbers at the existing threshold rather than changing what
+  threshold to run at, so `TEST_PLAN.md` Sec2's 0.55 reasoning stands
+  unmodified.
+- The pre-existing CGPA weakness is explicitly left alone here — it's a
+  different failure mode (number/acronym anchoring, not missing recency
+  framing) tracked separately in `CLAUDE.md`, and fixing it isn't part of
+  this task.
+
+**Verification**
+
+- Every claim above traces to a real query against the live corpus, a real
+  re-ingestion run, or a real validation-script run — not inferred from the
+  fix's plausibility.
+- No deploy needed for the retrieval half of this fix: `ingest.py` writes
+  directly to the same live Supabase project `agent/retrieval.py` queries
+  at runtime, so the deployed Fly.io worker's answers already reflect this
+  fix with zero code change or redeploy on that side. The frontend change
+  (`SuggestedQuestions.tsx`) is the only piece that would need a Vercel
+  redeploy to reach the live site — flagged to the owner as a push decision
+  rather than pushed automatically.
+- Committed as `5e81a39`, work only, separate from this journal entry.
