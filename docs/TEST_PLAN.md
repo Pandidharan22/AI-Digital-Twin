@@ -140,14 +140,41 @@ refusal is honest, an ungrounded answer is a lie.
 
 Instrument per stage (prompt P1.3), run 20 turns, record:
 
-| Stage | Target | Measured |
+| Stage | Target | Measured (2026-08-22) |
 |---|---|---|
-| End of utterance → STT final | < 300ms | |
-| Retrieval (embed + query) | < 100ms | |
-| LLM first token | < 500ms | |
-| First token → first audio byte | < 300ms | |
-| **Total (median)** | **< 1500ms** | |
-| **Total (p95)** | **< 2500ms** | |
+| End of utterance → STT final | < 300ms | not measured — see method note |
+| Retrieval (embed + query) | < 100ms | not separately instrumented — see method note |
+| LLM first token | < 500ms | **median 1066ms, p95 1276ms** (n=21, min 857ms, max 1635ms) |
+| First token → first audio byte (TTS TTFB) | < 300ms | median 244ms, p95 326ms (n=21, min 227ms, max 337ms) |
+| **Total (median)** | **< 1500ms** | not measured — see method note |
+| **Total (p95)** | **< 2500ms** | not measured — see method note |
+
+**Method note (2026-08-22):** measured via `tests/measure_latency.py`, a 20-turn
+run against the real deployed Fly.io worker using `lk.chat` text input
+(same substitution Suite C used, for the same reason — no real microphone
+capture available in this environment) with a realistic mix of Suite A/B/C
+questions, paced 14s apart. `llm_ttft` and `tts_ttfb` come from
+`ChatMessage.metrics` on all 21 assistant turns (greeting + 20 replies) — a
+real, full-coverage sample, not a spot check. **`e2e_latency` and
+`transcription_delay`/`end_of_turn_delay` were `None` on every single turn**,
+not a parsing gap: those fields are anchored to the STT/VAD-driven
+end-of-utterance event, which literal text injection into `lk.chat` never
+fires — confirmed by checking the parsed output, not assumed. So this run
+cannot produce the Total row or the STT row; that needs a real voice pass
+(a person speaking through the actual frontend), still open. Retrieval time
+is not separately logged anywhere in `agent/retrieval.py` or `agent/main.py`
+currently — folded into `llm_ttft` from the caller's perspective — so its
+own <100ms target is unverifiable without adding a dedicated timer, also
+still open.
+
+**Headline finding: LLM first token is real and roughly 2x the NFR-1.4
+target** (1066ms median vs. 500ms), on `gemini-3.5-flash-lite` against the
+actual Phase 3 system prompt + tool-calling overhead, not the trivial Phase 1
+placeholder prompt. The distribution is tight (857–1635ms, no outlier spike)
+— a real, stable measurement rather than an unlucky sample — which also means
+this isn't Phase 1's old "one slow request" story; it's a consistent 2x-over-
+target floor worth investigating as its own follow-up (prompt length, tool-
+call round-trip, or the model itself).
 
 **If total exceeds target, find the dominant stage before optimising.** Common culprits:
 
