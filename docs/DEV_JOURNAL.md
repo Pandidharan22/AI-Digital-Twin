@@ -3680,3 +3680,124 @@ naturally after the fix was pushed and succeeded, without needing a manual
 not inferred from the failure conclusion alone; fix confirmed via a real
 subsequent scheduled run's `conclusion: success`, not assumed from the
 YAML being valid. Committed as `c353247`, work only.
+
+---
+
+## 2026-08-22 — Post-launch hardening: to-do list, and the first real LLM latency measurement
+
+**What happened**
+
+With Phases 0–5 substantially built and live, this entry starts a new pass
+focused on production-standard hardening rather than new phases: read the
+full documentation set, `agent/*.py`, `api/main.py`, and the frontend cold,
+compiled a to-do list of everything still open (the retrieval-ranking gap on
+Suite A1, mobile responsive layout, `POST /token` rate limiting, an
+automated retrieval/citation test suite, the still-unmeasured 20-turn
+latency baseline, and the remaining Phase 5/6 checklist items), and started
+with the latency measurement — the item Phase 1 had flagged with real but
+stale numbers (2.5s avg TTFT measured against a trivial no-persona prompt,
+long before Phase 3's real system prompt and tool-calling existed).
+
+- Built `tests/measure_latency.py`: connects to LiveKit as a plain
+  `rtc.Room` client (reusing `api.main.create_token()` directly rather than
+  re-implementing token minting), drives 20 realistic questions — a mix
+  drawn from `TEST_PLAN.md` Suites A/B/C, including A1's own known
+  ranking-gap question — into the room over the `lk.chat` text-stream
+  topic, paced 14s apart. Same substitution `TEST_PLAN.md` Suite C used
+  and for the same reason: this environment's Browser pane sandbox can't
+  capture a real microphone, and `lk.chat` text feeds into the identical
+  `_claim_user_turn()` entry point a spoken utterance reaches after STT —
+  confirmed again directly from `livekit/agents/voice/room_io/room_io.py`
+  and `types.py`, not assumed to still be true since the last time this was
+  checked.
+- Built `tests/parse_latency_log.py`: reads `flyctl logs` output (or a
+  local `worker.log`-style capture), strips the ANSI-colored
+  `<timestamp> app[id] region [level]` prefix `flyctl` adds ahead of each
+  JSON payload, parses the JSON, regexes `agent/main.py`'s own
+  `"turn metrics: transcription_delay=... end_of_turn_delay=... llm_ttft=...
+  tts_ttfb=... e2e_latency=..."` log message (already emitted on every
+  turn since Phase 1 — no agent code changed for this), and reports
+  median/p95 per stage, dropping `None` values per-field rather than
+  treating them as zero.
+- **Ran it for real against the live production Fly.io worker** —
+  deliberately not against a second local worker instance, specifically to
+  avoid a second process registering for automatic dispatch alongside the
+  one real visitors could be routed to. Captured `flyctl logs -a
+  voice-twin-worker` to a file for the run's duration, then parsed just
+  that run's room (`twin-12e72214`) out of the (much larger, multi-room)
+  capture.
+- **Real finding:** all 21 assistant turns (greeting + 20 replies) reported
+  `llm_ttft` and `tts_ttfb` — full coverage, no dropped turns. Median
+  `llm_ttft` **1066ms**, p95 **1276ms** (min 857ms, max 1635ms — a tight
+  distribution, not one unlucky outlier). Median `tts_ttfb` 244ms, p95
+  326ms. Recorded directly in `TEST_PLAN.md` Sec3.
+- **Equally real, and reported rather than glossed over: `e2e_latency`,
+  `transcription_delay`, and `end_of_turn_delay` were `None` on every
+  single one of the 21 turns.** Not a parser bug — checked the raw parsed
+  fields directly before concluding this. `ChatMessage.metrics.e2e_latency`
+  is anchored to the STT/VAD-driven end-of-utterance event, and literal
+  text injected into `lk.chat` never fires that event — there's no
+  "utterance" to end. So this run answers "how fast does the LLM+TTS half
+  of the pipeline respond" honestly and with a real sample size, but
+  cannot answer TEST_PLAN.md's Total (median/p95) or STT rows at all — a
+  genuine method boundary, documented in `TEST_PLAN.md` rather than left
+  implicit, with a real voice pass (a person actually speaking through the
+  frontend) named as the specific way to close it.
+- Also confirmed, while writing up the method note: `agent/retrieval.py`
+  and `agent/main.py` don't separately time the retrieval stage anywhere —
+  its own `<100ms` target is currently unverifiable without adding a
+  dedicated timer around `retrieval.retrieve()`, folded invisibly into
+  `llm_ttft` from the caller's perspective today. Flagged as open, not
+  fixed here — this entry is a measurement pass, not an optimization pass.
+
+**Why**
+
+Phase 1's latency numbers were real when they were taken, but they were
+measured against a placeholder prompt with no retrieval, no tool-calling,
+and an earlier LLM choice — carrying them forward into a "production
+standard" pass would have meant optimizing against a number that no longer
+describes the actual system. Running a full 20-turn suite against the real
+deployed worker, with the real system prompt and the real question mix
+(including known-difficult ones like A1 and the salary anomaly), is the
+same "run it for real, don't assume" standard this project has held since
+Phase 0 — applied here to its own earlier findings, not just to new code.
+Running against the live Fly.io worker instead of a second local instance
+mattered specifically because LiveKit dispatch has no built-in preference
+between two registered workers for the same project; spinning up a second
+one, even briefly, risked a real visitor's room landing on the throwaway
+instance instead of the stable one.
+
+**Decisions made**
+
+- `tests/measure_latency.py` and `tests/parse_latency_log.py` are now
+  permanent, reusable tools, not one-off scripts — re-running the latency
+  suite after any future prompt or model change is now a two-command
+  operation instead of a bespoke script written from scratch each time.
+- The Total/STT gap is explicitly left open rather than worked around with
+  a synthetic audio track or similar — a real voice pass answers it more
+  honestly than a simulated one would, and this was a measurement task, not
+  where that engineering effort belonged.
+- Retrieval-stage timing is now a named, specific follow-up (add a timer in
+  `retrieval.retrieve()`), not a vague "latency might be an issue" note.
+
+**Verification**
+
+- `uv run python -m py_compile` on both new scripts before running either
+  for real.
+- Parser sanity-checked against a real, already-existing `flyctl logs`
+  sample (a different, earlier room from casual prior testing) before
+  trusting it against the actual measurement run — caught and fixed the
+  ANSI-prefix-vs-plain-JSON assumption this way, before it could have
+  silently produced an empty report against the real run.
+- The real run's own console output (20/20 questions sent, clean connect/
+  disconnect, no errors) cross-checked against the parsed line count (21
+  matched turn-metrics lines against 21 expected turns) — confirms nothing
+  was silently dropped between the two tool runs.
+- Scanned `tests/measure_latency.py`, `tests/parse_latency_log.py`, and the
+  `TEST_PLAN.md` diff for secret-shaped strings before staging — none
+  found.
+- `git status --short` after staging → exactly the three intended files.
+- Committed as `ffbcd95`, work only, separate from this journal entry.
+- No deploy involved and none needed — this added local tooling and a docs
+  update; nothing in `agent/`, `api/`, or `web/` changed, so the currently
+  running production worker and frontend are unaffected either way.

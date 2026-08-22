@@ -152,7 +152,16 @@ Read the relevant doc **before** implementing:
 `agent/twin_agent.py` (`TwinAgent` with `search_my_background`),
 `agent/citations.py` (publishes before generation, per ADR-005), the real
 `agent/prompts/system_prompt.md`, and `agent/main.py` are all live and verified.
-Only NFR-1.1/1.2's formal 20-turn latency measurement is still unmeasured.
+NFR-1.1/1.2's 20-turn latency measurement is now partially done (2026-08-22):
+`tests/measure_latency.py` + `tests/parse_latency_log.py` ran a real 20-turn
+suite against the live production worker (text input over `lk.chat`, same
+substitution `TEST_PLAN.md` Suite C used) and found `llm_ttft` median 1066ms/
+p95 1276ms — roughly 2x the NFR-1.4 target, a real and stable finding, not an
+outlier. `e2e_latency` and the STT-stage numbers came back `None` on every
+turn — a genuine method limit (those fields are anchored to the STT/VAD
+end-of-utterance event, which text injection never fires), not a bug; a real
+voice pass is still needed to fill in `TEST_PLAN.md`'s Total/STT rows. See
+`docs/TEST_PLAN.md` Sec3 and `docs/DEV_JOURNAL.md`'s 2026-08-22 entry.
 
 Phase 4 has three of five prioritized items done: `AgentStatus.tsx` (FR-5.2,
 via `useVoiceAssistant()`), `MicPermissionNotice.tsx` (explainer + a
