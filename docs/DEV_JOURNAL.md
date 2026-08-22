@@ -3653,3 +3653,30 @@ back-and-forth.
 - Committed as `8b0aa61` (fly.toml revert to `performance-2x`) and
   `f588159` (`.github/workflows/keep-warm.yml`) — each a separate work
   commit per protocol.
+
+**Same-day addendum: the keep-warm workflow itself needed a fix.** Owner
+reported a run had failed shortly after the entry above was written. Pulled
+the actual run logs (`.../actions/runs/{id}/logs`) rather than guessing —
+`curl: (28) Operation timed out after 30002 milliseconds`. Checked the
+surrounding runs' timestamps and found the real cause: GitHub's `schedule`
+trigger doesn't fire at exact 10-minute intervals (documented, not a bug
+here) — two runs that day landed after a 25-31 min gap instead of 10, long
+enough for Render to have gone back to sleep in between. That turned those
+particular pings into genuine cold-start requests, which had measured
+60-90s live earlier that same night — well past the original 30s
+`--max-time`. The pings that failed were exactly the ones that mattered
+most: the ones actually needed to wake a sleeping instance back up, not
+routine keep-warm touches on an already-warm one.
+
+Fixed by raising the per-attempt timeout to 100s and adding an explicit
+two-attempt bash loop, deliberately not curl's own `--retry` — its
+interaction with `--max-time` (whether the time budget is per-attempt or
+shared across all retries) wasn't something to guess at for a step whose
+only job is not silently failing. Verified live: a new scheduled run fired
+naturally after the fix was pushed and succeeded, without needing a manual
+`workflow_dispatch` to confirm it.
+
+**Verification (addendum):** diagnosed from the actual downloaded run logs,
+not inferred from the failure conclusion alone; fix confirmed via a real
+subsequent scheduled run's `conclusion: success`, not assumed from the
+YAML being valid. Committed as `c353247`, work only.
