@@ -3547,3 +3547,109 @@ nothing reads as "handled" until the next bill arrives.
 - Scanned the diff for secret-shaped strings before staging — none found
   (a one-line VM-size/memory change).
 - Committed as `79a31da`, work only.
+
+---
+
+## 2026-08-22 — Phase 5: live outage, `shared-cpu-2x` reverted, Render cold-start fixed
+
+**What happened**
+
+Owner reported the production site stuck on "Connecting…" shortly after the
+`shared-cpu-2x` downgrade above. Two genuinely separate problems, diagnosed
+in order rather than assumed to be the same one:
+
+1. **`shared-cpu-2x` regressed on its own.** `flyctl logs` showed the exact
+   same kill-and-retry `TimeoutError` loop from before the CPU-class
+   escalation, now happening again on the *same* VM class that had tested
+   clean just hours earlier. This is the honest failure mode of "shared"
+   CPU: performance depends on whatever else is running on the same
+   physical host at that moment, so one passing test is a sample, not a
+   proof. The earlier entry's "confirmed live" language oversold a single
+   data point. Reverted to `performance-2x`/4GB immediately — this was a
+   live outage, not a background improvement, so it shipped before writing
+   this entry, not after. Redeployed, confirmed `process initialized` in
+   ~21s with zero errors, verified via a fresh browser session against the
+   real production URL. `shared-cpu-2x` is not reused for this worker going
+   forward; `fly.toml` stays on `performance-2x`.
+2. **Separately, Render's token API had spun down.** With the Fly issue
+   fixed, the frontend was *still* stuck — this time because the free-tier
+   Render service goes to sleep after ~15 min with no inbound traffic, and
+   the first request after that pays a real cold-start cost. Watched it
+   directly: repeated 503s, then an "Application loading" placeholder, then
+   a successful response after roughly 60-90s total — worse than
+   `docs/DEPLOYMENT.md`'s own "10-30s" estimate for this exact scenario,
+   worth knowing for next time.
+3. **A third, separate signal surfaced during diagnosis and was correctly
+   set aside.** Testing from this session's own Bash tool, DNS lookups for
+   `onrender.com` returned obviously-wrong IPs — even when the resolver was
+   explicitly pointed at `8.8.8.8`, and even via DNS-over-HTTPS to bypass
+   local interception for a sanity check (which returned Render's real,
+   correct IP). A direct connection to that real IP then hung for a full
+   60s with no response, consistent with SNI-based filtering somewhere on
+   the owner's local network (router-level DNS filtering, ISP hijacking, or
+   security software), not a Render-side problem. Confirmed this was
+   local-network-specific, not universal, by reaching Render fine from a
+   separate browser sandbox on a different network. Reported to the owner
+   as something outside this session's reach to fix (no tool access to
+   their router/ISP), rather than either ignoring it or spending further
+   session time on a problem this agent cannot act on.
+
+**Then, the actual fix for problem #2:** built the keep-warm ping
+`docs/DEPLOYMENT.md` Sec4 had already specified but never implemented
+(`GET /health` every 5-10 min) — `.github/workflows/keep-warm.yml`, a
+`schedule: cron` GitHub Actions workflow hitting the token API's existing
+`/health` endpoint (already present in `api/main.py`, already commented
+"also the keep-warm ping target" — this was designed for from the start,
+just never wired up). Chose GitHub Actions over an external uptime pinger
+(the doc's other listed option) since Actions is already this project's
+mechanism for the ingestion cron — no new account, no new secret, `/health`
+is a public unauthenticated GET.
+
+**Why**
+
+The manual-trigger verification step matters more than it looks: this
+session's own ingestion PAT lacks `actions:write` scope, and rather than
+widen that token's permissions just to self-verify, the honest move was to
+ask the owner to click "Run workflow" once. Widening a token's scope beyond
+what its original purpose needed, even temporarily, is exactly the kind of
+small permission-creep that's easy to justify in the moment and easy to
+regret later — not doing it here even though it would have saved one
+back-and-forth.
+
+**Decisions made**
+
+- `performance-2x`/4GB is the worker's VM size again, and this time framed
+  as the *actually* settled choice, with the prior entry's "confirmed
+  shared CPU works" superseded in place by this one rather than deleted —
+  same annotate-don't-rewrite convention as always. The real lesson: a
+  single successful load test on a "shared" resource class is not evidence
+  of reliability, only evidence it can work.
+- Keep-warm ping lives in `.github/workflows/keep-warm.yml`, cron
+  `*/10 * * * *`, `workflow_dispatch` also enabled for manual runs.
+- The local-DNS-interference finding is the owner's to act on (router/ISP
+  settings), not something fixed in this repo — noted here so a future
+  session doesn't waste time re-diagnosing it from scratch if it resurfaces.
+
+**Verification**
+
+- Root cause of the Fly regression confirmed from the same
+  `TimeoutError`/kill-loop signature as the original diagnosis, not
+  guessed — then fixed and reverified with a live redeploy and a real
+  browser session, not assumed from the fix's plausibility.
+- Render cold-start timing observed directly (503s, then "Application
+  loading", then success), not estimated from the docs.
+- DNS hijacking finding cross-checked three ways before being reported as
+  fact: local resolver, explicit `8.8.8.8` query (same wrong answer,
+  confirming interception isn't resolver-specific), and DNS-over-HTTPS
+  (correct answer, confirming the real record is fine) — then confirmed
+  network-specific, not universal, via a working fetch from an unrelated
+  browser sandbox.
+- Keep-warm workflow verified two ways: local `yaml.safe_load` before
+  committing, then a real `workflow_dispatch` run after push, confirmed via
+  the GitHub API showing `"status": "completed", "conclusion": "success"`
+  — not assumed working just because the YAML was syntactically valid and
+  GitHub listed it as "active".
+- Scanned every diff for secret-shaped strings before staging — none found.
+- Committed as `8b0aa61` (fly.toml revert to `performance-2x`) and
+  `f588159` (`.github/workflows/keep-warm.yml`) — each a separate work
+  commit per protocol.
