@@ -3941,3 +3941,116 @@ issue" or "maybe the model's just bad at this" — is what turned a vague
   redeploy to reach the live site — flagged to the owner as a push decision
   rather than pushed automatically.
 - Committed as `5e81a39`, work only, separate from this journal entry.
+
+---
+
+## 2026-08-22 — Mobile responsive layout: audited first, fixed the one real gap
+
+**What happened**
+
+Next to-do item: mobile responsive layout, flagged since Phase 4 as
+untouched (`App.css` had zero `@media` rules of its own). Rather than
+assume the whole layout needed breakpoints and start writing CSS, audited
+it first — `CLAUDE.md`'s "for UI changes, start the dev server and use the
+feature in a browser" rule, adapted to this environment's real constraint.
+
+- Added `.claude/launch.json` (vite dev server, port 5173) so the Browser
+  pane's `preview_start` tooling has a target — didn't exist yet, this is
+  the first frontend-verification pass to need it.
+- Ran the frontend against a **local** Token Service (`uv run uvicorn
+  api.main:app --port 8000`) rather than the deployed one — same reasoning
+  as the latency measurement task's decision to avoid a second worker
+  instance: no infra risk either way here since the Token Service is
+  stateless, but running locally kept this session's CORS/env config
+  simple without touching production's `FRONTEND_ORIGIN` allowlist.
+- **Real constraint hit immediately: the Browser pane's screenshot
+  compositing requires the pane to be visibly displayed on the owner's
+  side, which it wasn't during this session** — `computer{action:
+  screenshot}` timed out every attempt. Rather than skip the visual audit
+  or fake a result, switched to `javascript_tool` executing real
+  `getBoundingClientRect()` / `getComputedStyle()` calls against the live
+  DOM at `resize_window`'s mobile preset (375×812) — genuinely verifies
+  actual rendered geometry, just numerically instead of visually. Named
+  here as a real method substitution, same as the latency task's `lk.chat`
+  text-input substitution — not hidden.
+- Findings, all from real measurements against the actual running app, not
+  inferred from reading CSS alone:
+  - **Zero horizontal overflow anywhere** — scanned every element on the
+    page for `getBoundingClientRect().right > window.innerWidth`, none
+    found. The existing single-column layout (flex + `rem` units +
+    `flex-wrap`, from the Phase 4 UI redesign) turned out to already be
+    fully fluid without ever having a breakpoint written for it.
+  - `#root`'s `min-height: 100svh` (small viewport height, not the classic
+    buggy `100vh`) already handles mobile browser chrome correctly — this
+    was already right, from the original Vite template CSS, not something
+    this session added.
+  - `h1`/`h2` already scale down under the existing `1024px` breakpoint in
+    `index.css`, which also covers phone widths since it's a `max-width`
+    rule — confirmed `h1` renders on one line at 375px, not wrapped.
+  - **The one real gap:** `.mic-toggle` — a real `<button>`, the *only*
+    interactive control this app has (voice-only, no text-input path) —
+    measured **91×33px** at every viewport width. 33px is under the 44px
+    "comfortable tap target" guideline (Apple HIG; WCAG 2.5.5 AAA), though
+    still above WCAG 2.5.8's 24px AA minimum — a real, if not severe, gap
+    on the single most important element of the page.
+- Fixed with one scoped `@media (max-width: 480px)` block in `App.css`
+  bumping `.mic-toggle` to `min-height: 44px` with slightly larger padding
+  and font-size — desktop's deliberately compact sizing (per
+  `MicToggle.tsx`'s own comment about not needing `ControlBar`'s bigger
+  default chrome) is untouched, since the media query only applies under
+  480px.
+- Verified the fix landed via Vite's HMR (no reload needed) at 375px —
+  `.mic-toggle` now 44px tall, still zero overflow — then resized to
+  1280px and confirmed the desktop button is unchanged (37px, same as
+  before). Ran `npm run build` afterward — clean, the pre-existing
+  744KB-chunk size warning is unrelated to this change (LiveKit's client
+  bundle, not something this task touched).
+
+**Why**
+
+Writing broad new breakpoints for a layout that turned out to already be
+fluid would have been solving a problem that didn't exist and risked
+introducing new bugs into CSS that was working — the same "don't
+speculatively engineer for hypothetical requirements" principle this
+project has held elsewhere, applied here to UI work instead of backend
+code. Auditing first is what turned "mobile layout" from a vague,
+open-ended to-do item into one specific, evidence-backed, one-block fix.
+
+**Decisions made**
+
+- No general mobile breakpoint system was added — the layout doesn't need
+  one right now. If future components (e.g. a fuller citations view) turn
+  out not to be as fluid as this one, that's a new, separately-diagnosed
+  problem, not something to guess at preemptively here.
+- `.claude/launch.json` is now a permanent repo file — reusable for any
+  future frontend verification pass, not a one-off.
+- Real iOS/Android Safari behavior (mic permission prompts, audio autoplay
+  policy, actual touch behavior) remains **unverified** — this audit
+  confirms layout geometry in a Chromium-based mobile emulation, not real
+  mobile Safari, which `TEST_PLAN.md`'s U5/U6 and `BUILD_PLAN.md` Phase 5's
+  exit criteria explicitly call for as a separate, real-device pass. Not
+  claimed as done here.
+
+**Verification**
+
+- Every geometry claim above came from a real `getBoundingClientRect()` /
+  `getComputedStyle()` call against the actual running app in the Browser
+  pane, not from reading CSS and reasoning about what it should produce.
+- Confirmed the local dev stack was genuinely live end-to-end before
+  auditing anything: `get_page_text` showed a real spoken greeting from
+  the actual deployed production worker (dispatched into a real LiveKit
+  room via the local Token Service), not a stub or mock.
+- `npm run build` (`tsc -b && vite build`) run clean after the CSS change.
+- Both local servers (Token Service, Vite dev server) stopped after
+  verification — nothing left running past this session's need for them.
+- Scanned `web/src/App.css` and `.claude/launch.json` for secret-shaped
+  strings before staging — none found (expected; a CSS media query and a
+  dev-server command config).
+- `git status --short` after staging → exactly the two intended files
+  (one modified, one new).
+- Committed as `c74ce0d`, work only, separate from this journal entry.
+- **No deploy needed for this fix to be verified** (it was verified against
+  a local dev server), but reaching the live site **does** need a Vercel
+  push — this commit, plus the still-unpushed `SuggestedQuestions.tsx`
+  revert from the previous task, are both held per the owner's standing
+  instruction to ask before pushing frontend changes.

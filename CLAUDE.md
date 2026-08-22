@@ -141,7 +141,8 @@ Read the relevant doc **before** implementing:
 - [x] Phase 3 — Grounding and citations (core build + Suite C voice run done;
       20-turn latency measurement still open)
 - [ ] Phase 4 — UX (connection states, mic flow, suggested questions, and the
-      transcript panel are done; mobile polish still open)
+      transcript panel are done; mobile audited and its one real gap fixed —
+      real-device Safari/cellular verification still open)
 - [ ] Phase 5 — Deployment (fully hosted on Render/Vercel/Fly.io, verified
       end-to-end; a few hardening items still open — see below)
 - [ ] Phase 6 — Testing and submission
@@ -166,9 +167,8 @@ voice pass is still needed to fill in `TEST_PLAN.md`'s Total/STT rows. See
 Phase 4 has three of five prioritized items done: `AgentStatus.tsx` (FR-5.2,
 via `useVoiceAssistant()`), `MicPermissionNotice.tsx` (explainer + a
 `mediaDevicesError`-driven denied-state message), and `SuggestedQuestions.tsx`
-(FR-5.4, `CITATION_SPEC.md` §7's four demo questions — with question 1 swapped
-to `TEST_PLAN.md`'s A2 phrasing since A1's literal wording is the known
-retrieval-ranking gap noted below). `TranscriptPanel.tsx` (FR-5.1) is also
+(FR-5.4, `CITATION_SPEC.md` §7's four demo questions, now the literal spec
+wording again — see the A1 fix below). `TranscriptPanel.tsx` (FR-5.1) is also
 done, using `@livekit/components-react`'s own `useTranscriptions()` hook —
 the same mechanism behind LiveKit's Agent Console transcript view, no
 agent-side changes needed. UI was redesigned once already after owner
@@ -176,8 +176,20 @@ feedback on the first live deployment (2026-08-21): single-column blended
 layout (no boxed transcript, no half-screen citations panel), a custom
 `MicToggle.tsx` replacing `ControlBar`, and `CitationsPanel.tsx` now labels
 each source by document type (Resume / Notes (context.md) / `<repo>` —
-README.md) instead of showing the raw retrieved excerpt. Still open: mobile
-responsive layout.
+README.md) instead of showing the raw retrieved excerpt.
+
+**Mobile layout audited and its one real gap fixed (2026-08-22).** Measured
+actual rendered geometry (`getBoundingClientRect`/`getComputedStyle`, not
+visual screenshots — this environment's Browser pane wasn't visibly
+displayed, so screenshot compositing wasn't available) against the real
+running app at 375px: the existing flex/`rem`-based single-column layout was
+already fully fluid with zero horizontal overflow anywhere. The one real gap
+— `.mic-toggle`, the app's only interactive control, at 33px tall vs. the
+44px comfortable touch-target guideline — is now fixed via one scoped
+`@media (max-width: 480px)` block in `App.css`, desktop unchanged. Real iOS/
+Android Safari behavior (mic permission prompts, audio autoplay policy) is
+still unverified — needs an actual device, per `TEST_PLAN.md` U5/U6. See
+`docs/DEV_JOURNAL.md`'s 2026-08-22 entry.
 
 **Phase 5 is fully hosted and verified end-to-end** (2026-08-21/22): Token
 Service on Render (`https://voice-twin-api-46lk.onrender.com`, via the
