@@ -34,12 +34,24 @@ Grounded in this project's real corpus (resume + `corpus/context.md`) — extend
 
 **Pass:** every question returns `match`, and the expected source is in the top 2.
 
-**Known gap (2026-08-21, deferred to Phase 6):** A1 ("What's your most recent
-role?") fails to retrieve the Freelance experience chunk in the top-4 at every
-threshold tested (0.50–0.65) — not a threshold problem, a ranking one. This is
-`CITATION_SPEC.md` §7's first suggested demo question, so it needs fixing before
-submission, just not blocking Phase 3 Day 4. See `docs/DEV_JOURNAL.md`'s
-2026-08-21 threshold-tuning entry.
+**A1 fixed (2026-08-22).** The gap flagged on 2026-08-21 — A1 ("What's your
+most recent role?") failing to retrieve the Freelance experience chunk in the
+top-4 at every threshold tested (0.50–0.65) — was a root-caused content
+problem, not a threshold one, as suspected then: the chunk's text described
+the freelance work but never stated it *was* the most recent role, so a
+recency-framed query had no lexical/semantic anchor and lost to unrelated
+chunks with current-status language (`context.md`'s "what I'm working on
+right now", the `Job-Hunt-AI` README). Fixed in
+`ingestion/loaders/pdf_loader.py` by stating the fact plainly — "Most recent
+role: Freelance Software Developer." prepended to the chunk text, and the
+section renamed to "Most Recent Role — Freelance Software Developer" — since
+this is the resume's only Experience entry, so it genuinely is the most
+recent (and only) role. Re-ingested and reverified: A1 now ranks the correct
+chunk at **rank 0, score 0.70–0.71**, comfortably ahead of the next result
+(0.62) across the whole threshold sweep. Suite A at the deployed threshold
+(0.55) improved from 9/13 to **10/13**, Suite B unchanged at 1/7 false
+accepts (the same documented salary/vocabulary-proximity anomaly, unrelated
+to this fix). Full account in `docs/DEV_JOURNAL.md`'s 2026-08-22 entry.
 
 ### Suite B — Out-of-corpus (must all NO_MATCH)
 

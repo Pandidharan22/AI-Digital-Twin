@@ -204,8 +204,20 @@ def load(pdf_path: Path) -> List[RawSection]:
 
     if sections.get("Experience / Freelance"):
         text = _clean(" ".join(sections["Experience / Freelance"]))
+        # The extracted text itself never says this is the *most recent* role
+        # -- it just describes the work -- so a query built around recency
+        # ("most recent role") has no lexical or semantic anchor to latch
+        # onto, and loses to unrelated chunks that happen to use
+        # current-status language (e.g. context.md's "what I'm working on
+        # right now"). This is the sole Experience entry on the resume, so
+        # it genuinely is the most recent/only role -- stating that plainly
+        # is accurate, not embedding-gaming. See TEST_PLAN.md Suite A1 and
+        # docs/DEV_JOURNAL.md's 2026-08-22 root-cause entry.
+        text = f"Most recent role: Freelance Software Developer. {text}"
         results.append(
-            RawSection(source, "resume", "Experience — Freelance Software Developer", text)
+            RawSection(
+                source, "resume", "Most Recent Role — Freelance Software Developer", text
+            )
         )
 
     if sections.get("Core Engineering Strengths"):
