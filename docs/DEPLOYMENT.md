@@ -174,7 +174,13 @@ architecture change" is a stronger answer than pretending the limit isn't there.
 - [ ] Refusal shows the "no source" state
 
 **Resilience**
-- [ ] Ingestion cron ran successfully at least once
+- [x] Ingestion cron ran successfully at least once (2026-08-23) — confirmed
+      via the GitHub Actions API, both the `Run ingestion` and `Validate
+      corpus` steps green against the actual latest commit. Took six rounds
+      of real, live fixes to get there (three secrets pasted with stray
+      whitespace, a missing threshold config, a known gap that would have
+      failed every run forever) — see `docs/DEV_JOURNAL.md`'s 2026-08-23
+      entries for the full account.
 - [ ] Idle 30 min then immediately usable
 - [ ] Mic-denied path shows a helpful message
 - [ ] Rate limit produces a spoken fallback, not silence

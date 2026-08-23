@@ -283,36 +283,30 @@ daily schedule + `workflow_dispatch`, runs `ingestion.ingest` then
 never checked out in CI; confirmed safe by design (not assumed) via a
 read-only `_load_all()` dry run showing only the six GitHub-sourced repos
 get produced when those files are absent, so their existing Supabase rows
-are never touched. Pushed, secrets added, and manually triggered through six rounds of real,
-root-caused CI-only failures (2026-08-23) — each confirmed via GitHub's own
-Actions API before diagnosing (which caught, among other things, "Re-run
-failed jobs" replaying the *original* triggering commit rather than the
-branch's current tip, twice). Rounds 1-2: `DATABASE_URL` then `GITHUB_TOKEN`
-had whitespace baked in from GitHub's secrets-paste UI (trailing, then
-embedded mid-token) — invisible locally since `python-dotenv` trims `.env`
-values but `os.environ` in Actions doesn't. Fixed with `ingestion/env.py`'s
-`env_secret()`. Round 3: `SUPABASE_SERVICE_KEY` had the same problem, fixed
-by re-copying it via clipboard instead of visual selection. **Round 4 — the
-first run where `ingestion.ingest` itself actually succeeded** — but the
-"Validate corpus" step then failed for two new, different, non-secret
-reasons: `ingest.yml` never set `RETRIEVAL_THRESHOLD`/`RETRIEVAL_TOP_K`, so
-`validate.py` fell back to a stale `0.35` default instead of the real
-`0.55`, and separately, the known/accepted CGPA weakness (open item 4 below)
-would have failed the validation step *every single scheduled run,
-forever*. Both fixed: the workflow now sets the real values explicitly, and
-`validate.py` reports known gaps as flagged, not failures. Verified locally
-with the exact CI env values — clean pass. **Not yet pushed or re-verified
-live** — same discipline as every prior round: confirm the next run's
-actual commit via the API before trusting the result. See
-`docs/DEV_JOURNAL.md`'s 2026-08-23 entries for the full round-by-round
-account.
+are never touched.
+
+**Confirmed live and working end-to-end (2026-08-23)**, after six rounds of
+real, root-caused CI-only failures — each confirmed via GitHub's own
+Actions API (which commit a run actually executed against) before
+diagnosing, a habit that caught "Re-run failed jobs" silently replaying the
+*original* triggering commit rather than the branch's tip, twice. Three
+secrets (`DATABASE_URL`, `GITHUB_TOKEN`, `SUPABASE_SERVICE_KEY`) had
+whitespace baked in from GitHub's secrets-paste UI — invisible locally
+since `python-dotenv` trims `.env` values but `os.environ` in Actions
+doesn't — fixed with `ingestion/env.py`'s `env_secret()`. Once ingestion
+itself succeeded, `ingestion.validate` still failed twice more: a missing
+`RETRIEVAL_THRESHOLD`/`RETRIEVAL_TOP_K` config (now explicit, non-secret
+`env:` values matching production) and the known/accepted CGPA weakness
+(item 4 below), which would have failed the step *every scheduled run
+forever* had it not been taught to report known gaps as flagged rather
+than failing. Final run: both `Run ingestion` and `Validate corpus` green,
+verified via the Actions API against the exact latest commit. Full
+round-by-round account in `docs/DEV_JOURNAL.md`'s 2026-08-23 entries.
 
 Still open before Phase 5's exit criteria are fully met: the
 30-minute-idle-then-cold-open test (now easier to re-verify with the keep-warm
 cron in place — worth confirming it actually prevents the sleep, not just
-assuming), mobile Safari/cellular verification, and confirming the
-ingestion cron ran successfully at least once (blocked on the secrets
-above).
+assuming), and mobile Safari/cellular verification.
 
 **Blocked by:** Nothing functionally. Open items: (1) the Phase 1 barge-in
 timing (~455ms) number is still unrevisited since Phase 1 — see (2a) below for
