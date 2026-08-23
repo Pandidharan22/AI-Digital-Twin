@@ -5085,3 +5085,73 @@ culture works against.
 - No deploy needed and none happened — this is diagnostic tooling and a
   docs update; `agent/`, `api/`, and `web/` are all untouched, so nothing
   about the currently-deployed system changed either way.
+
+---
+
+## 2026-08-23 — Made the latency decision durable: NFR-1.4 annotated, not silently missed
+
+**What happened**
+
+Presented the three options from the entry above; owner chose option 1 —
+accept the current LLM latency as the floor, don't pursue the paid tier or
+the architectural change right now. Made that decision durable in the
+actual requirements document rather than leaving it as only a `TEST_PLAN.md`
+test-log note: added a dated status block directly under `SRS.md`'s
+NFR-1.4, the formal spec `CLAUDE.md`'s own header says requirement IDs are
+"stable — cite them in your prompts" — the kind of document someone (an
+evaluator, or the owner in an interview) would actually go read to check
+whether the spec was met, not just the test log.
+
+- Kept NFR-1.4's original `< 500ms` target text untouched — annotating a
+  miss honestly is different from quietly lowering the bar to match
+  whatever was achieved, and `docs/DEV_JOURNAL.md`'s own established
+  convention throughout this project has been to annotate reversed or
+  unmet decisions in place rather than rewrite history.
+- **Surfaced a consequence that wasn't yet stated anywhere:** NFR-1.1's
+  median total-latency budget is 1.5s, but the LLM portion alone (from
+  yesterday's diagnostic: ~1.7–1.9s for both sequential Gemini calls a
+  grounded turn makes) already exceeds that *entire* budget before STT,
+  retrieval, or TTS time are even added. Left unstated, `SRS.md` would
+  have quietly implied NFR-1.1/1.2 were still independently achievable
+  when the LLM-latency finding already makes that arithmetically
+  implausible — flagged explicitly rather than leaving a reader to
+  discover the contradiction themselves later.
+- Resolved `TEST_PLAN.md`'s three-option list from the previous entry:
+  marked option 1 as the chosen path, and reworded options 2/3 from "not
+  yet decided" to "explicitly deferred" — a small wording change, but the
+  difference between "we haven't gotten to this" and "we looked at this
+  and chose not to do it right now" matters for anyone reading the doc
+  cold later.
+
+**Why**
+
+A requirements spec that silently stops matching reality is worse than no
+spec at all — it actively misleads whoever reads it next into thinking a
+target was met. The alternative (quietly editing the `500ms` down to
+whatever the real number turned out to be) would have hidden that a real
+trade-off was made and reasoned through, which is exactly the kind of
+decision an interview conversation about this project would want to be
+able to point to directly in the docs rather than reconstruct from memory.
+
+**Decisions made**
+
+- NFR-1.4's original target stays as written; the annotation is the record
+  of what actually happened against it, not a replacement number.
+- No code changed and none needed to — this was entirely about making an
+  already-made decision legible in the one document most likely to be
+  read as the authoritative spec.
+
+**Verification**
+
+- Re-read `docs/SRS.md`'s own framing ("Requirement IDs are stable — cite
+  them...") before deciding how to annotate rather than renumber or
+  rewrite NFR-1.4.
+- Checked the NFR-1.1 arithmetic directly (1.7–1.9s LLM total vs. 1.5s
+  total budget) before stating the "likely unreachable" consequence, not
+  asserting it from a vague sense that things were slow.
+- Scanned `docs/SRS.md` and `docs/TEST_PLAN.md`'s diffs for secret-shaped
+  strings before staging — none found.
+- `git status --short` after staging → exactly the two intended files.
+- Committed as `8bdba95`, work only, separate from this journal entry.
+- No push needed — docs only, `agent/`/`api/`/`web/` untouched, nothing
+  about the deployed system changes either way.

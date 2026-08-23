@@ -321,10 +321,14 @@ makes two sequential Gemini calls (tool-decision, then final answer), and
 until now. Real per-turn LLM total is ~1.7–1.9s, not ~1.07s. Two candidate
 fixes were tested and ruled out empirically (`thinking_level` tuning — already
 the model's own default; system-prompt trimming — no measurable effect).
-Remaining options (paid priority tier, or an architectural change to cut a
-round-trip) are both owner decisions, not made unilaterally — see
-`docs/TEST_PLAN.md` Sec3 and `docs/DEV_JOURNAL.md`'s 2026-08-23 entry. Total
-end-to-end and STT-stage numbers are still unmeasured (need a real voice
+**Owner decision (2026-08-23): accept this as the current floor**, not the
+paid priority tier or an architectural round-trip cut — both stay
+deliberately deferred, not silently dropped. Made durable in `docs/SRS.md`
+NFR-1.4 (annotated in place, original `<500ms` target kept visible, plus the
+consequence that NFR-1.1/1.2's totals are very likely unreachable as written
+too, since the LLM portion alone already exceeds NFR-1.1's whole budget) —
+see `docs/TEST_PLAN.md` Sec3 and `docs/DEV_JOURNAL.md`'s 2026-08-23 entries.
+Total end-to-end and STT-stage numbers are still unmeasured (need a real voice
 pass, not text input); (3) **fixed
 (2026-08-22)** — `CITATION_SPEC.md` §7's literal first demo question ("Tell me
 about your most recent role") previously failed to retrieve the Freelance
