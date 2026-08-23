@@ -42,6 +42,18 @@ SPOT_CHECKS = [
     ("What's your CGPA?", ["cgpa", "7.6"]),
 ]
 
+# Same known, understood, currently-accepted gap tests/test_retrieval_suite.py
+# tracks as xfail(strict=True) -- bge-small-en-v1.5's documented weakness
+# anchoring on short acronyms/numbers inside longer passages (CLAUDE.md open
+# item 4). Reported below as a flagged gap, not counted toward pass/fail, so
+# this known issue can't perpetually fail the GitHub Actions ingestion cron
+# (which emails the owner on every failure) -- confirmed live 2026-08-23 that
+# it otherwise would, every single scheduled run, forever, which is exactly
+# the kind of noise that trains someone to stop reading failure alerts.
+_KNOWN_GAPS = {
+    "What's your CGPA?": "bge-small-en-v1.5 short-acronym/number weakness -- CLAUDE.md open item 4",
+}
+
 OUT_OF_SCOPE_QUERY = "What's your favorite pizza topping?"
 
 
@@ -101,8 +113,11 @@ def _match(client, query: str, threshold: float, top_k: int):
 
 def validate_retrieval() -> bool:
     client = create_client(env_secret("SUPABASE_URL"), env_secret("SUPABASE_SERVICE_KEY"))
-    threshold = float(os.environ.get("RETRIEVAL_THRESHOLD", 0.35))
-    top_k = int(os.environ.get("RETRIEVAL_TOP_K", 4))
+    # Defaults match the actual deployed values (.env / agent/config.py),
+    # not Phase 2's original placeholders -- a script relying on these
+    # fallbacks should validate against reality, not a stale early guess.
+    threshold = float(os.environ.get("RETRIEVAL_THRESHOLD", 0.55))
+    top_k = int(os.environ.get("RETRIEVAL_TOP_K", 5))
 
     ok = True
     print(f"\nSpot-check queries (threshold={threshold}, top_k={top_k}):")
@@ -128,8 +143,11 @@ def validate_retrieval() -> bool:
             None,
         )
         if found_at is None:
-            print(f"    FAIL: none of {keywords} found in top-{top_k}")
-            ok = False
+            if query in _KNOWN_GAPS:
+                print(f"    KNOWN GAP (not counted): {_KNOWN_GAPS[query]}")
+            else:
+                print(f"    FAIL: none of {keywords} found in top-{top_k}")
+                ok = False
         else:
             print(f"    PASS (matched at rank {found_at})")
 

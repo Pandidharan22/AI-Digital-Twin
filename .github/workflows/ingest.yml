@@ -39,6 +39,14 @@ jobs:
       # actually reads.
       GITHUB_TOKEN: ${{ secrets.INGEST_GITHUB_PAT }}
       GITHUB_USERNAME: Pandidharan22
+      # Not secrets -- the same tuned values agent/config.py reads from
+      # .env in every other environment. Without these, ingestion/
+      # validate.py silently falls back to its own stale built-in default
+      # (0.35), which lets out-of-scope queries match and fails the
+      # out-of-scope spot check -- confirmed live 2026-08-23 against this
+      # exact workflow, not a hypothetical.
+      RETRIEVAL_THRESHOLD: "0.55"
+      RETRIEVAL_TOP_K: "5"
     steps:
       - uses: actions/checkout@v4
 
