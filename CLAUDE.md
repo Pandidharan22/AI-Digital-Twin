@@ -313,8 +313,19 @@ timing (~455ms) number is still unrevisited since Phase 1 — see (2a) below for
 the LLM-latency half, which is no longer stale; (2a) NFR-1's LLM-latency
 numbers are now real and current (2026-08-22, superseding the stale Phase 1
 figures): `llm_ttft` median 1066ms/p95 1276ms across a real 20-turn production
-run — see `docs/TEST_PLAN.md` Sec3. Total end-to-end and STT-stage numbers are
-still unmeasured (need a real voice pass, not text input); (3) **fixed
+run — see `docs/TEST_PLAN.md` Sec3. **2026-08-23 optimization pass:** that
+1066ms figure turned out to be only half the real cost — every grounded turn
+makes two sequential Gemini calls (tool-decision, then final answer), and
+`livekit-agents` only attaches `.metrics` to the second; the first (median
+~1010ms, via `tests/bench_llm.py` calling the SDK directly) was invisible
+until now. Real per-turn LLM total is ~1.7–1.9s, not ~1.07s. Two candidate
+fixes were tested and ruled out empirically (`thinking_level` tuning — already
+the model's own default; system-prompt trimming — no measurable effect).
+Remaining options (paid priority tier, or an architectural change to cut a
+round-trip) are both owner decisions, not made unilaterally — see
+`docs/TEST_PLAN.md` Sec3 and `docs/DEV_JOURNAL.md`'s 2026-08-23 entry. Total
+end-to-end and STT-stage numbers are still unmeasured (need a real voice
+pass, not text input); (3) **fixed
 (2026-08-22)** — `CITATION_SPEC.md` §7's literal first demo question ("Tell me
 about your most recent role") previously failed to retrieve the Freelance
 experience chunk in the top-4 at every threshold tested (0.50–0.65); root

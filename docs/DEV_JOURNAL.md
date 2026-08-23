@@ -4967,3 +4967,121 @@ round *N+1*'s symptom, and independently confirming which commit a run
 actually executed against before drawing any conclusion from it — twice
 that specific check caught a stale-run illusion that would otherwise have
 looked like "the fix didn't work."
+
+---
+
+## 2026-08-23 — LLM latency optimization: found the invisible half of the cost, ruled out two levers
+
+**What happened**
+
+Picked up the next to-do item: optimizing the ~2x-over-target LLM TTFT
+`tests/measure_latency.py` found earlier (median 1066ms vs. NFR-1.4's
+500ms). Diagnosed before touching anything, per `CLAUDE.md`'s standing
+rule.
+
+- **First question: what does `llm_ttft` actually measure?** Every
+  grounded turn makes two sequential Gemini calls — one to decide whether
+  to call `search_my_background`, a second to generate the final answer
+  once the tool result is back. Read `livekit-agents`' own source
+  (`generation.py`, `chat_context.py`, `agent_activity.py`) rather than
+  assuming: `.metrics` (and so `llm_ttft`) only ever attaches to a
+  completed `ChatMessage` — `FunctionCall` items, which is what the first
+  call produces, carry no metrics field at all. The previously-measured
+  1066ms was *only ever the second call*. The first call's own latency has
+  been completely invisible in every measurement taken so far, including
+  the 20-turn production run from earlier this week.
+- Built `tests/bench_llm.py` to see it directly: calls the same
+  `google-genai` SDK `livekit-plugins-google` wraps under the hood,
+  bypassing the pipeline entirely, using the real system prompt (via
+  `agent.twin_agent._load_instructions()`, not a copy) and a real tool
+  schema shape matching `search_my_background`'s actual declaration.
+- **Real, non-obvious blocker while building it:** a naive synthetic
+  call2 (fabricating a `function_call` Part by hand to simulate "the model
+  already decided to call the tool") got a hard `400 INVALID_ARGUMENT` —
+  Gemini 3 requires a real `thought_signature` on any `function_call` Part
+  used in multi-turn context, not just a soft warning if it's missing.
+  Checked whether this was a production bug hiding in plain sight before
+  treating it as just a benchmark-script problem: read
+  `livekit-plugins-google/llm.py` directly and confirmed the real plugin
+  already stores and threads real `thought_signature`s through correctly
+  for actual production traffic (`self._thought_signatures: dict[str,
+  bytes]`, keyed by `tool_call.call_id`) — so this was specifically a gap
+  in the benchmark's synthetic data, not a live bug. Fixed by having the
+  script make one real, unbenchmarked "priming" call to get a genuine
+  `function_call` Part with a real signature, then reusing that same real
+  part across every call2 variant.
+- **Real findings, 6 trials per variant, paced to stay under
+  `gemini-3.5-flash-lite`'s free-tier RPM budget:**
+  - Call 1 (tool-decision): median **1010ms**, p95 1098ms — comparable to
+    or larger than call 2's own latency. The real per-turn LLM cost is
+    roughly **1.7–1.9s total** (both calls), not the ~1.07s the pipeline's
+    own metric alone ever showed.
+  - `thinking_level="minimal"` set explicitly: median 746ms vs. 768ms for
+    the default — noise, not a win. Confirms, empirically and not just
+    from Google's docs (fetched live earlier), that `gemini-3.5-flash-lite`
+    already runs at its fastest thinking setting by default.
+  - System prompt cut from ~450 words to ~15: 799ms vs. 768ms — also
+    noise. Prompt-processing cost isn't the bottleneck at this scale, so
+    trimming the grounding contract for speed would have been a real
+    quality regression for zero latency benefit.
+- Documented both negative results in `TEST_PLAN.md` alongside the real
+  total-latency finding, specifically so a future session doesn't
+  re-spend an hour re-testing the same two hypotheses from scratch.
+- Named, but did not pursue, the two levers actually left: Gemini's paid
+  "priority" `ServiceTier` (exists in the SDK; its free-tier availability
+  and real latency effect aren't documented anywhere fetched so far, and
+  it risks real cost — `CLAUDE.md`'s "don't introduce paid dependencies
+  without asking" applies directly, so this is an owner decision, not
+  made here) and a bigger architectural change to cut a round-trip
+  entirely (real risk to Suite C's well-tested grounding/refusal
+  behavior, not a quick follow-up).
+
+**Why**
+
+The whole point of measuring call 1 was that the previous latency number,
+real as it was, was quietly describing half the actual user-perceived
+wait — optimizing against `llm_ttft` alone, even successfully, would have
+left the bigger, invisible half of the cost completely untouched.
+Verifying the `thought_signature` failure wasn't a live production bug
+before writing it off as a benchmark quirk mattered because the two
+explanations lead to very different follow-ups: one is "fix the
+benchmark," the other is "there's a real correctness bug in production
+multi-turn tool calling" — treating it as the former without checking
+would have been exactly the kind of unverified assumption this project's
+culture works against.
+
+**Decisions made**
+
+- Neither `thinking_level` tuning nor system-prompt trimming are viable
+  latency levers for this model/architecture — closed, not left open for
+  someone to re-try later without a new reason to suspect otherwise.
+- The paid priority tier and the architectural round-trip cut are both
+  explicitly deferred to the owner's call, not attempted unilaterally —
+  one has a real cost implication, the other a real risk to already-
+  verified grounding behavior; neither is a "just try it and see" change.
+- `tests/bench_llm.py` is a permanent, reusable diagnostic tool, same
+  status as `tests/measure_latency.py` — re-running it after any future
+  prompt, model, or SDK version change is now a one-command operation.
+
+**Verification**
+
+- Read `livekit-agents`' real installed source (`generation.py`,
+  `chat_context.py`, `agent_activity.py`) to confirm what `llm_ttft`
+  actually measures, before building anything to fill the gap.
+- Sanity-checked the benchmark script's API shape with one real,
+  unbenchmarked call before committing to the full paced trial run — cost
+  nothing to catch a wrong assumption early rather than mid-sweep.
+- Verified the `thought_signature` failure was a benchmark-only gap, not
+  a production bug, by reading `livekit-plugins-google/llm.py`'s real
+  thought-signature handling directly rather than assuming either way.
+- All latency numbers are real trial results from `uv run python -m
+  tests.bench_llm` against the live Gemini API — not estimated or
+  inferred from the earlier pipeline measurement.
+- `uv run python -m py_compile tests/bench_llm.py` clean before every run.
+- Scanned `tests/bench_llm.py` and the `TEST_PLAN.md` diff for
+  secret-shaped strings before staging — none found.
+- `git status --short` after staging → exactly the two intended files.
+- Committed as `d330fd1`, work only, separate from this journal entry.
+- No deploy needed and none happened — this is diagnostic tooling and a
+  docs update; `agent/`, `api/`, and `web/` are all untouched, so nothing
+  about the currently-deployed system changed either way.
