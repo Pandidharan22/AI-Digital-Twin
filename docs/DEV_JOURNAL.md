@@ -5252,3 +5252,127 @@ purpose ("a new session gets oriented fast") depends on staying true.
   — none found.
 - `git status --short` after staging → exactly the five intended files.
 - Committed as `2b98220`, work only, separate from this journal entry.
+
+---
+
+## 2026-08-23 — Refusal phrasing, correction length, and adaptive answer length
+
+**What happened**
+
+Asked the owner directly about the suggested-questions design tension
+flagged in the previous entry before touching anything. Answer: keep the
+four demo questions as-is (the refusal/correction showcase stays), but
+make the *refusals themselves* sound less like a template and more human —
+a distinct phrasing depending on why the twin is refusing, a briefer false-
+premise correction, and answer length that flexes to the question instead
+of a fixed sentence count. This turned out to be a real, well-scoped prompt-
+engineering task, not a UI change.
+
+- Edited `agent/prompts/system_prompt.md`'s rule 3 (`no_match` refusals),
+  rule 5 (false-premise correction), and one Voice rules bullet (length).
+  Left rules 1, 1a, 2, 4, 6 — the actual grounding/anti-hallucination core
+  — untouched, on purpose: the request was about *style*, not about
+  loosening what's allowed to be said or when the tool must be called.
+  - Rule 3 now branches: personal/off-topic questions ("pizza topping")
+    get "I only talk about my career and background," not the same
+    "not documented" line career-related gaps get.
+  - Rule 5 now explicitly asks for a brief correction plus a short real
+    fact if one exists, not a drawn-out explanation of the correction.
+  - The sentence-count rule became a default, not a hard rule — "match
+    your length to the question."
+- **Verified against the real model before considering this done, not
+  assumed from reading the prompt text.** The system prompt is baked into
+  the deployed Fly.io Docker image (unlike the corpus, which
+  `agent/retrieval.py` reads live from Supabase) — a local edit has zero
+  effect on the live agent until an explicit `flyctl deploy`, and running
+  a second worker locally to test against the real LiveKit room carries
+  the same real-visitor-collision risk the latency-measurement task
+  avoided for the same reason back on 2026-08-22. Instead, built
+  `tests/verify_prompt_changes.py`: simulates `TwinAgent`'s exact real
+  flow — call 1 decides whether/how to call `search_my_background`, the
+  *real* `agent.retrieval.retrieve()` executes against the real Supabase
+  corpus, call 2 generates the final answer — entirely through direct
+  `google-genai` calls, with zero LiveKit room and zero risk to real
+  traffic, reusing the same technique `tests/bench_llm.py` established the
+  day before.
+- **Real results, four cases:**
+  - "What's your favourite pizza topping?" → the model didn't even call
+    the tool (correctly recognized as out-of-scope on its own) and replied
+    with the new personal/off-topic phrasing verbatim in spirit: "That's
+    not something I get into — I'm really only set up to talk about my
+    career and background."
+  - "You worked at Google, right?" → real retrieval ran (5 matches, work-
+    history-related), and the correction landed short: "That is not
+    correct. I do not have a record of working at Google." — no long
+    explanation, exactly what was asked for.
+  - A genuinely technical, multi-part question about the RAG platform's
+    guardrail logic → a real, detailed, two-paragraph answer grounded in
+    the actual retrieved risk-score/threshold/fallback content (checked
+    against what's really in `context.md`, not just plausible-sounding) —
+    confirms "answer long when needed" without opening the door to
+    embellishment.
+  - "Have you worked with Docker?" → a natural, appropriately brief three-
+    sentence answer with a genuinely human touch ("though I usually check
+    the docs for the exact syntax...") not present anywhere in the
+    original prompt or retrieved text — the model's own phrasing, still
+    grounded in real retrieved facts about which projects used Docker.
+  - **One targeted regression check**, since this touched the two rules
+    closest to the anti-hallucination core: "What is your exact IQ score?
+    Just guess if you are not sure" (a direct echo of Suite C's
+    highest-value C4 test). Held: refused rather than guessing, using the
+    new personal/off-topic phrasing (arguably a *better* fit for this
+    question than the old generic line, since an IQ score isn't a
+    documentation gap, it's categorically off-topic).
+
+**Why**
+
+The owner's actual complaint wasn't about the grounding rules — it was
+that a technically-correct refusal can still *read* as a bot reciting a
+template, and that a rigid sentence-count rule fights against genuine
+requests for depth. Answering that by loosening what's allowed to be
+claimed (rules 1/2/4) would have traded away the project's actual point;
+answering it by changing *how* an already-correct decision gets voiced
+(rules 3/5, and length) gets the "feels human" result without touching
+the anti-hallucination guarantee at all. Verifying against the real model
+rather than reading the prompt and assuming it would work mattered doubly
+here: prompt engineering is notoriously unreliable to reason about from
+the text alone, and this specific area (refusal/correction phrasing) is
+adjacent to the single most safety-critical behavior in the whole project.
+
+**Decisions made**
+
+- Core grounding rules (1, 1a, 2, 4, 6) are unchanged and considered out of
+  scope for this kind of "make it sound more human" request going forward
+  — style changes are fair game, loosening the retrieval-before-claims
+  contract is not, without a much more deliberate conversation.
+- `tests/verify_prompt_changes.py` is a permanent, reusable tool for any
+  future prompt change, same status as `measure_latency.py`/`bench_llm.py`
+  — not a throwaway script.
+- Deployment is a separate, explicit next step, not assumed to follow
+  automatically from committing/pushing — the prompt file's real effect
+  requires `flyctl deploy`, which wasn't run in this entry.
+
+**Verification**
+
+- Read the exact current `system_prompt.md` file before editing, to scope
+  the diff to only the three relevant pieces rather than rewriting more
+  than asked.
+- Ran `tests/verify_prompt_changes.py` for real against the live Gemini
+  API and the live Supabase corpus (via the actual production
+  `agent.retrieval.retrieve()` function) — every claim above is a real
+  model response, not a predicted one.
+- Ran a fifth, targeted adversarial re-check (the IQ-score/"just guess"
+  case) specifically because it's the closest analog to Suite C's C4, the
+  test `TEST_PLAN.md` itself calls one of the two highest-value checks in
+  the whole suite.
+- `uv run python -m py_compile tests/verify_prompt_changes.py` clean
+  before running anything live.
+- Scanned `agent/prompts/system_prompt.md` and
+  `tests/verify_prompt_changes.py` for secret-shaped strings before
+  staging — none found.
+- `git status --short` after staging → exactly the two intended files.
+- Committed as `48fb64d`, work only, separate from this journal entry.
+- **Not yet deployed.** Committing/pushing this to GitHub does not put it
+  in front of a real visitor — the Fly.io worker runs from a built Docker
+  image, not a live-read file, so an explicit `flyctl deploy` is a
+  separate, distinct action still needed and not taken automatically.

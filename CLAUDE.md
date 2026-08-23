@@ -156,6 +156,13 @@ Read the relevant doc **before** implementing:
 `agent/twin_agent.py` (`TwinAgent` with `search_my_background`),
 `agent/citations.py` (publishes before generation, per ADR-005), the real
 `agent/prompts/system_prompt.md`, and `agent/main.py` are all live and verified.
+**`system_prompt.md` was refined again on 2026-08-23** (differentiated
+`no_match` refusal phrasing, briefer false-premise corrections, answer length
+that flexes to the question) and verified against the real model via
+`tests/verify_prompt_changes.py` — but is **not yet deployed**: unlike the
+corpus, the prompt is baked into the Fly.io Docker image, so it needs an
+explicit `flyctl deploy` to reach production, still pending. See
+`docs/DEV_JOURNAL.md`'s 2026-08-23 entry.
 NFR-1.1/1.2's 20-turn latency measurement is now partially done (2026-08-22):
 `tests/measure_latency.py` + `tests/parse_latency_log.py` ran a real 20-turn
 suite against the live production worker (text input over `lk.chat`, same
