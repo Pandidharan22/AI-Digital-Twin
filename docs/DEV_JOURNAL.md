@@ -4641,3 +4641,58 @@ zero risk, so there was no real reason to need the blocked path at all.
   to add via GitHub's repo settings before this can run for real — this
   session has no credential scoped to add repo secrets, so that step is
   the owner's regardless of the push decision.
+
+**Same-day addendum: first live run failed, root-caused, and fixed.** Owner
+pushed, added the four secrets, and triggered the workflow manually. First
+real run failed at the very first step (`setup_db()`):
+
+```
+psycopg.OperationalError: connection failed: ... FATAL:  database "postgres
+" does not exist
+```
+
+Read the error closely rather than guessing at "wrong secret value" — the
+database name literally shows `"postgres` followed by a real line break
+before the closing quote. Every other part of the connection (host, port,
+pooler routing across all three IPs it tried) succeeded, which narrowed it
+immediately to one specific thing: the `DATABASE_URL` secret has a trailing
+newline baked into its stored value. This is a normal, easy mistake when
+pasting a value into GitHub's secret text box (selecting from a terminal's
+`cat` output, or a text editor, often carries the trailing line terminator
+along), and it doesn't show up in *any* local testing this session did,
+because `python-dotenv` (used everywhere else this project reads `.env`)
+already trims trailing whitespace from parsed values — GitHub Actions
+secrets get injected into `os.environ` with no such trimming, so this
+exact class of mistake is invisible until it hits CI specifically.
+
+Fixed by adding `.strip()` at all six places ingestion code reads a secret
+directly from the environment — `DATABASE_URL`, `SUPABASE_URL`,
+`SUPABASE_SERVICE_KEY` in both `ingest.py` and `validate.py`, plus
+`GITHUB_USERNAME`/`GITHUB_TOKEN` in `github_loader.py` — not just the one
+that happened to fail first. The other three were pasted into GitHub's UI
+the same way, in the same sitting, so they're equally likely to carry the
+same artifact; `GITHUB_TOKEN` in particular would have failed even more
+confusingly if left alone, since a trailing newline inside an
+`Authorization: Bearer <token>` header value is something an HTTP client/
+server rejects outright rather than silently misparsing the way a
+connection-string database name did here.
+
+**Why this is a code fix, not just "re-paste the secret cleaner":** the
+`.strip()` fully and permanently closes this exact failure mode regardless
+of how carefully any future paste is done, whereas asking the owner to
+re-enter the secret only fixes today's instance of a mistake that's easy to
+make again the next time any of these four secrets get rotated. Same
+reasoning as Phase 0's `SUPABASE_URL` trailing-space trim in `.env` itself
+— fix the data where it's cheap and permanent, not just this one symptom.
+
+**Verification (addendum):** ran `uv run python -m ingestion.validate`
+for real against the live corpus after the fix (a read-only operation,
+safe to run directly, unlike `ingest.py`'s writes) — connected and queried
+successfully, confirming `.strip()` is a true no-op against this session's
+own clean local `.env` values and didn't change any local behavior. Also
+reran the full `-m "not integration"` pytest subset — 3 passed, unaffected.
+Scanned the diff for secret-shaped strings before staging — none found (it
+only ever calls `.strip()` on values already sourced from `os.environ`,
+never touches a literal secret). Committed as `cf75316`, work only. Push
+needed to reach the workflow that's already live and failing on the old
+code — flagged to the owner, not pushed automatically.
