@@ -175,7 +175,25 @@ def _split_education(lines: List[str], source: str) -> List[RawSection]:
 
     if not entries:
         return []
-    text = _clean(" ".join(entries))
+    # Same root cause and fix as the Freelance chunk above (see that
+    # comment, and TEST_PLAN.md Suite A1 / docs/DEV_JOURNAL.md's 2026-08-22
+    # entry): the raw entries are a dense institution/CGPA/date dump with no
+    # natural-language framing, so a query like "What did you study?" has no
+    # anchor to latch onto -- confirmed by querying the live corpus, where
+    # this chunk ranked #16 at score 0.48, below RETRIEVAL_THRESHOLD's 0.55
+    # gate. A first pass ("Studied X at Y.") only raised it to 0.51 --
+    # still short -- so before committing to a phrasing, compared candidate
+    # framings directly by cosine similarity against the query (see
+    # docs/DEV_JOURNAL.md's 2026-08-23 entry): echoing the query's own
+    # structure ("What I studied: ...") scored meaningfully higher (0.596)
+    # than a plain declarative sentence (0.538) for reasons not fully
+    # explained by anything simpler than "the model's embedding space
+    # rewards structural mirroring here" -- worth remembering as a general
+    # technique, not just a one-off fix.
+    text = _clean(
+        "What I studied: Computer Science and Engineering, at Saveetha "
+        "Engineering College, Chennai. " + " ".join(entries)
+    )
     return [RawSection(source, "resume", "Education", text)]
 
 
