@@ -263,6 +263,19 @@ local production build and the **live deployed bundle** were scanned for
 every real secret's literal value plus generic secret-shape patterns —
 clean both times. See `docs/TEST_PLAN.md` Sec6.
 
+An automated test suite now exists (2026-08-23): `tests/test_citations.py`
+(unit, `CITATION_SPEC.md` Sec4's payload contract, no live infra) and
+`tests/test_retrieval_suite.py` (integration, Suite A/B against the real
+corpus via the real `agent/retrieval.py`). Run via `uv run pytest`
+(`-m "not integration"` for the fast path). Building it surfaced and fixed
+one more real Suite A gap (A5, "What did you study?" — same missing-framing
+root cause as A1) and found one new, deliberately-not-fixed trade-off (A7,
+"hardest technical problem" — the right chunk scores 0.51, just under the
+0.55 gate; fixing it would cost more Suite B false accepts than it's worth).
+Current corpus state: 11/13 Suite A, 6/7 Suite B, with all three known gaps
+(A7, CGPA, salary) tracked as `xfail(strict=True)`, not silently accepted.
+See `docs/TEST_PLAN.md` Sec1-2 and `docs/DEV_JOURNAL.md`'s 2026-08-23 entry.
+
 Still open before Phase 5's exit criteria are fully met: the
 30-minute-idle-then-cold-open test (now easier to re-verify with the keep-warm
 cron in place — worth confirming it actually prevents the sleep, not just
