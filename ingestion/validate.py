@@ -19,6 +19,7 @@ from supabase import create_client
 
 from ingestion.chunker import CEILING_TOKENS, FLOOR_TOKENS, _token_count
 from ingestion.embedder import embed_query
+from ingestion.env import env_secret
 
 load_dotenv()
 
@@ -46,8 +47,7 @@ OUT_OF_SCOPE_QUERY = "What's your favorite pizza topping?"
 
 def validate_structure() -> bool:
     ok = True
-    # .strip(): see ingest.py's setup_db() -- same CI secret-paste hazard.
-    with psycopg.connect(os.environ["DATABASE_URL"].strip()) as conn:
+    with psycopg.connect(env_secret("DATABASE_URL")) as conn:
         with conn.cursor() as cur:
             cur.execute("select count(*) from chunks")
             total = cur.fetchone()[0]
@@ -100,9 +100,7 @@ def _match(client, query: str, threshold: float, top_k: int):
 
 
 def validate_retrieval() -> bool:
-    client = create_client(
-        os.environ["SUPABASE_URL"].strip(), os.environ["SUPABASE_SERVICE_KEY"].strip()
-    )
+    client = create_client(env_secret("SUPABASE_URL"), env_secret("SUPABASE_SERVICE_KEY"))
     threshold = float(os.environ.get("RETRIEVAL_THRESHOLD", 0.35))
     top_k = int(os.environ.get("RETRIEVAL_TOP_K", 4))
 

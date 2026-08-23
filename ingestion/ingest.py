@@ -8,7 +8,6 @@ get deleted (removes content that no longer exists at the source).
 Covers: FR-6.1, FR-6.4. See DATA_INGESTION.md Sec6.
 """
 
-import os
 from pathlib import Path
 from typing import List
 
@@ -18,6 +17,7 @@ from supabase import Client, create_client
 
 from ingestion.chunker import chunk
 from ingestion.embedder import embed_documents
+from ingestion.env import env_secret
 from ingestion.loaders import github_loader, markdown_loader, pdf_loader
 from ingestion.types import ChunkRecord
 
@@ -35,12 +35,12 @@ def setup_db() -> None:
     similarity function need a direct Postgres connection. Idempotent: every
     statement in schema.sql is IF NOT EXISTS / OR REPLACE, safe to re-run.
     """
-    # .strip(): a GitHub Actions secret pasted with a trailing newline (an
-    # easy copy-paste artifact, confirmed live 2026-08-23 -- psycopg parsed
-    # the database name as "postgres\n" and failed) reaches os.environ
-    # verbatim, unlike .env values, which python-dotenv already trims. Local
-    # dev never hits this; CI secrets are exactly the boundary where it can.
-    database_url = os.environ["DATABASE_URL"].strip()
+    # env_secret(), not os.environ[...] directly -- see ingestion/env.py.
+    # A GitHub Actions secret pasted with stray whitespace (confirmed live
+    # 2026-08-23 against this exact workflow) reaches os.environ verbatim;
+    # local dev never hits this, since python-dotenv already trims .env
+    # values.
+    database_url = env_secret("DATABASE_URL")
     sql = SCHEMA_PATH.read_text(encoding="utf-8")
     with psycopg.connect(database_url) as conn:
         with conn.cursor() as cur:
@@ -49,9 +49,7 @@ def setup_db() -> None:
 
 
 def _supabase_client() -> Client:
-    return create_client(
-        os.environ["SUPABASE_URL"].strip(), os.environ["SUPABASE_SERVICE_KEY"].strip()
-    )
+    return create_client(env_secret("SUPABASE_URL"), env_secret("SUPABASE_SERVICE_KEY"))
 
 
 def _load_all() -> List[ChunkRecord]:

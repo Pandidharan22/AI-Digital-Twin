@@ -20,12 +20,12 @@ FR-6.7).
 Covers: FR-6.5. See DATA_INGESTION.md Sec7.
 """
 
-import os
 import re
 from typing import List, Optional
 
 import httpx
 
+from ingestion.env import env_secret
 from ingestion.types import RawSection
 
 SOURCE_TYPE = "github_repo"
@@ -124,12 +124,14 @@ def _split_readme(readme: str) -> List[tuple]:
 
 
 def load() -> List[RawSection]:
-    # .strip(): same CI secret-paste hazard as ingest.py's setup_db() -- a
-    # trailing newline here would land inside the Authorization header
-    # value itself, which httpx/the server would reject outright rather
-    # than silently misparse the way psycopg's URL parsing did.
-    username = os.environ["GITHUB_USERNAME"].strip()
-    token = os.environ["GITHUB_TOKEN"].strip()
+    # env_secret(), not os.environ[...] directly -- see ingestion/env.py.
+    # A plain .strip() wasn't enough here: the real live failure
+    # (docs/DEV_JOURNAL.md 2026-08-23) was httpx/h11 rejecting the
+    # Authorization header outright ("Illegal header value"), meaning the
+    # stray whitespace in this particular secret was embedded mid-token,
+    # not just trailing.
+    username = env_secret("GITHUB_USERNAME")
+    token = env_secret("GITHUB_TOKEN")
     headers = {
         "Authorization": f"Bearer {token}",
         "Accept": "application/vnd.github+json",
