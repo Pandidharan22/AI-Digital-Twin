@@ -38,3 +38,16 @@ torch = { index = "pytorch-cpu" }
 name = "pytorch-cpu"
 url = "https://download.pytorch.org/whl/cpu"
 explicit = true
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+asyncio_mode = "auto"
+markers = [
+    "integration: hits the real, live Supabase corpus (embeds locally, real network call) -- needs DATABASE_URL/SUPABASE_* in .env. Skip with -m \"not integration\" for a fast, infra-free run.",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=9.1.1",
+    "pytest-asyncio>=1.4.0",
+]
