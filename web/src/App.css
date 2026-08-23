@@ -166,14 +166,56 @@
 .transcript-lines {
   display: flex;
   flex-direction: column;
-  gap: 0.6rem;
+  gap: 0.75rem;
+}
+
+/* One turn = one bubble (transcript-line) plus, for a grounded agent reply,
+   its own citation directly underneath -- not a separate feed at the
+   bottom (a real gap found in the 2026-08-23 mobile test: citations from
+   every turn used to pile up disconnected from which message they backed).
+   align-items here positions the bubble left/right; text-align inside the
+   bubble itself is set explicitly below and stays left either way, since
+   #root's inherited `text-align: center` (index.css, an unmodified Vite
+   template default) was silently center-aligning the agent's bubble text
+   -- the actual root cause of that alignment complaint, not a hypothetical. */
+.transcript-turn {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+  max-width: 90%;
+}
+
+.transcript-turn-visitor {
+  align-self: flex-end;
+  align-items: flex-end;
+}
+
+.transcript-turn-agent {
+  align-self: flex-start;
+  align-items: flex-start;
 }
 
 .transcript-line {
   margin: 0;
   font-size: 0.95rem;
   line-height: 1.5;
-  max-width: 90%;
+  text-align: left;
+  padding: 0.55rem 0.9rem;
+  border-radius: 1.1rem;
+}
+
+.transcript-turn-visitor .transcript-line {
+  background: var(--accent-bg);
+  border: 1px solid var(--accent-border);
+  border-bottom-right-radius: 0.3rem;
+  color: var(--text-h);
+}
+
+.transcript-turn-agent .transcript-line {
+  background: var(--code-bg);
+  border: 1px solid var(--border);
+  border-bottom-left-radius: 0.3rem;
+  color: var(--text-h);
 }
 
 .transcript-speaker {
@@ -182,46 +224,26 @@
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.05em;
-  margin-bottom: 0.1rem;
+  margin-bottom: 0.15rem;
   color: var(--text);
-  opacity: 0.5;
+  opacity: 0.6;
 }
 
-.transcript-line-visitor {
-  align-self: flex-end;
-  text-align: right;
-  color: var(--text-h);
-}
-
-.transcript-line-agent {
-  align-self: flex-start;
-  color: var(--text-h);
-}
-
-/* Sources: compact link/label chips directly under the transcript, one row
-   per turn -- never the raw retrieved paragraph. */
-.citations-feed {
-  display: flex;
-  flex-direction: column;
-  gap: 0.35rem;
-  margin: -0.25rem 0 0.25rem;
-}
-
-.citation-turn {
-  align-self: flex-start;
-}
-
+/* Sources: compact link/label chips, now living directly under the turn
+   that produced them instead of a separate accumulating feed. */
 .citation-no-source {
   font-size: 0.72rem;
   color: var(--text);
   opacity: 0.5;
   font-style: italic;
+  padding: 0 0.2rem;
 }
 
 .citation-chips {
   display: flex;
   flex-wrap: wrap;
   gap: 0.35rem;
+  padding: 0 0.2rem;
 }
 
 .citation-chip {

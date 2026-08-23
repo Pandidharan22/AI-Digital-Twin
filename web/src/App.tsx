@@ -1,11 +1,10 @@
 import { useEffect, useState } from "react";
 import { LiveKitRoom, RoomAudioRenderer } from "@livekit/components-react";
-import { CitationsPanel } from "./components/CitationsPanel";
 import { AgentStatus } from "./components/AgentStatus";
 import { SuggestedQuestions } from "./components/SuggestedQuestions";
 import { MicPermissionNotice } from "./components/MicPermissionNotice";
 import { MicToggle } from "./components/MicToggle";
-import { TranscriptPanel } from "./components/TranscriptPanel";
+import { ConversationLog } from "./components/ConversationLog";
 import "./App.css";
 
 interface TokenResponse {
@@ -64,8 +63,7 @@ function App() {
         </div>
         <MicPermissionNotice />
 
-        <TranscriptPanel />
-        <CitationsPanel />
+        <ConversationLog />
         <SuggestedQuestions />
       </div>
       <RoomAudioRenderer />
