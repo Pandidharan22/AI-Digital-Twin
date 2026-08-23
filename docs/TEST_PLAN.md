@@ -251,23 +251,24 @@ isn't the bottleneck at this scale. Both were real, worth-checking
 hypotheses that turned out to be dead ends, not confirmed wins — recorded
 here so a future session doesn't re-spend time re-testing them.
 
-**What's left, in decreasing order of how low-risk/zero-cost it is:**
-1. **Accept ~700–1100ms/call as close to this model tier's practical
-   floor** and document NFR-1.4 against the real two-call total rather
-   than a single-call assumption the spec was originally written around.
-2. **A paid Gemini "priority" service tier exists** (`ServiceTier.PRIORITY`
-   in the SDK) that may reduce latency, but its free-tier availability and
-   actual latency effect aren't documented anywhere fetched so far — not
-   tested, since it risks real cost and `CLAUDE.md`'s "everything free
-   tier, don't introduce paid dependencies without asking" applies
-   directly. Owner decision, not made unilaterally.
-3. **An architectural change** — skip the tool-decision call for
-   unambiguous factual questions (a cheaper heuristic pre-classifier) or
-   restructure away from two-call agentic tool-use entirely — would cut
-   real latency but is a materially bigger, riskier change to the
-   well-tested grounding/refusal behavior (Suite C, ADR-004) than
-   anything tried so far. Not started; needs its own plan, not a quick
-   follow-up.
+**Decision (2026-08-23): accepted as the current floor, not pursued further
+for now.** Of the three options weighed, the owner chose not to spend
+further effort chasing this today:
+1. ~~Accept ~700–1100ms/call as close to this model tier's practical
+   floor~~ — **this is the chosen path.** `docs/SRS.md` NFR-1.4 (and, by
+   consequence, NFR-1.1/1.2's totals) are annotated accordingly rather than
+   silently left looking achievable.
+2. A paid Gemini "priority" service tier exists (`ServiceTier.PRIORITY` in
+   the SDK) that may reduce latency, but its free-tier availability and
+   actual latency effect aren't documented anywhere fetched so far, and it
+   risks real cost — not pursued, per `CLAUDE.md`'s "don't introduce paid
+   dependencies without asking."
+3. An architectural change — skip the tool-decision call for unambiguous
+   factual questions, or restructure away from two-call agentic tool-use
+   entirely — would cut real latency but is a materially bigger, riskier
+   change to the well-tested grounding/refusal behavior (Suite C,
+   ADR-004) than anything tried so far. Not pursued now; would need its
+   own plan if revisited later, not a quick follow-up.
 
 **If total exceeds target, find the dominant stage before optimising.** Common culprits:
 

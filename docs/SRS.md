@@ -134,6 +134,27 @@ documents, with source attribution surfaced in the user interface.
   constrained by this, not by benchmark quality scores.
 - **NFR-1.5** Cold visitor to live conversation: **< 15s**.
 
+**NFR-1.4 status (2026-08-23): target not met, accepted as a known limitation,
+not pursued further at this time.** Real measurement against the deployed
+`gemini-3.5-flash-lite` (already the fastest tier available, satisfying this
+NFR's own "model choice is constrained by speed" clause) shows each Gemini
+call landing at 700–1100ms, roughly 2x the 500ms target — and a grounded
+turn makes *two* sequential calls (tool-decision, then final answer), so the
+real per-turn LLM total is ~1.7–1.9s, not a single call's worth. Two
+zero-cost, zero-risk levers were tested and ruled out empirically (Gemini's
+own "minimal" thinking level, already the model's default; system-prompt
+length, no measurable effect either way) — see `docs/TEST_PLAN.md` Sec3 and
+`docs/DEV_JOURNAL.md`'s 2026-08-23 entry for the full diagnostic. The two
+paths that remain — a paid Gemini service tier, or an architectural change to
+cut a round-trip — both carry real cost or real risk to the already-verified
+grounding/refusal behavior (Suite C), and the owner's explicit call
+(2026-08-23) was to accept the current floor rather than pursue either right
+now. **This also means NFR-1.1/1.2's totals are very likely unreachable as
+written**, since the LLM portion alone (~1.7–1.9s) already exceeds NFR-1.1's
+entire 1.5s median budget before STT, retrieval, or TTS time are even added
+— flagged here rather than left to look independently achievable. Revisit if
+either deferred path gets picked up later.
+
 ### NFR-2 Reliability
 
 - **NFR-2.1** The Agent Worker SHALL be reachable during evaluation windows; sleeping
