@@ -32,8 +32,30 @@ worker's logs afterward, since Fly logs interleave every concurrent room.
 import asyncio
 
 from livekit import rtc
+from starlette.requests import Request
 
 from api.main import create_token
+
+
+def _mint_token() -> object:
+    """create_token() now requires a real starlette.requests.Request --
+    slowapi's @limiter.limit decorator (added for the POST /token rate
+    limit, 5954335) reads request["path"]/request.client off it. A minimal
+    but complete ASGI http scope satisfies that without needing an actual
+    running server; get_remote_address() only ever reads request.client,
+    so this script correctly counts as one caller against the real
+    deployed rate limit, same as a browser would."""
+    scope = {
+        "type": "http",
+        "method": "POST",
+        "path": "/token",
+        "query_string": b"",
+        "headers": [],
+        "client": ("127.0.0.1", 0),
+        "server": ("localhost", 8000),
+        "scheme": "http",
+    }
+    return create_token(Request(scope=scope))
 
 # Mirrors docs/DEV_JOURNAL.md's 2026-08-21 Suite C methodology: 14s between
 # turns keeps this comfortably under gemini-3.5-flash-lite's >=15 RPM free
@@ -77,7 +99,7 @@ QUESTIONS = [
 
 
 async def main() -> None:
-    token_resp = create_token()
+    token_resp = _mint_token()
     print(f"room: {token_resp.room}")
     print(f"turns: {len(QUESTIONS)}, pace: {PACE_SECONDS}s, "
           f"estimated duration: ~{WARMUP_SECONDS + len(QUESTIONS) * PACE_SECONDS + PACE_SECONDS}s")
