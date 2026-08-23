@@ -283,23 +283,29 @@ daily schedule + `workflow_dispatch`, runs `ingestion.ingest` then
 never checked out in CI; confirmed safe by design (not assumed) via a
 read-only `_load_all()` dry run showing only the six GitHub-sourced repos
 get produced when those files are absent, so their existing Supabase rows
-are never touched. Pushed, secrets added, and manually triggered (2026-08-23) — two rounds of
-real, root-caused CI-only failures so far, both from the same underlying
-cause: GitHub Actions secrets pasted with stray whitespace, invisible in
-local dev since `python-dotenv` already trims `.env` values but reaching
-`os.environ` byte-for-byte in Actions. Round 1: `DATABASE_URL` had a
-trailing newline, breaking `psycopg`'s connection (fixed with `.strip()`,
-confirmed via GitHub's Actions API that the retry genuinely ran the fixed
-commit before trusting the result). Round 2: `GITHUB_TOKEN` had whitespace
-*embedded mid-token* — `.strip()` can't catch that, since it only trims
-the ends — causing `httpx`/h11 to reject the `Authorization` header
-outright. Generalized rather than patched again: `ingestion/env.py`'s
-`env_secret()` now strips whitespace from anywhere in the string, used for
-all six secret reads across `ingest.py`/`validate.py`/`github_loader.py`.
-Verified locally (no-op against clean `.env` values) via a real
-`ingestion.validate` run and the pytest suite. **Not yet pushed, and still
-not confirmed working end-to-end** — a third distinct failure past this
-point hasn't been ruled out. See `docs/DEV_JOURNAL.md`'s 2026-08-23 entries.
+are never touched. Pushed, secrets added, and manually triggered through six rounds of real,
+root-caused CI-only failures (2026-08-23) — each confirmed via GitHub's own
+Actions API before diagnosing (which caught, among other things, "Re-run
+failed jobs" replaying the *original* triggering commit rather than the
+branch's current tip, twice). Rounds 1-2: `DATABASE_URL` then `GITHUB_TOKEN`
+had whitespace baked in from GitHub's secrets-paste UI (trailing, then
+embedded mid-token) — invisible locally since `python-dotenv` trims `.env`
+values but `os.environ` in Actions doesn't. Fixed with `ingestion/env.py`'s
+`env_secret()`. Round 3: `SUPABASE_SERVICE_KEY` had the same problem, fixed
+by re-copying it via clipboard instead of visual selection. **Round 4 — the
+first run where `ingestion.ingest` itself actually succeeded** — but the
+"Validate corpus" step then failed for two new, different, non-secret
+reasons: `ingest.yml` never set `RETRIEVAL_THRESHOLD`/`RETRIEVAL_TOP_K`, so
+`validate.py` fell back to a stale `0.35` default instead of the real
+`0.55`, and separately, the known/accepted CGPA weakness (open item 4 below)
+would have failed the validation step *every single scheduled run,
+forever*. Both fixed: the workflow now sets the real values explicitly, and
+`validate.py` reports known gaps as flagged, not failures. Verified locally
+with the exact CI env values — clean pass. **Not yet pushed or re-verified
+live** — same discipline as every prior round: confirm the next run's
+actual commit via the API before trusting the result. See
+`docs/DEV_JOURNAL.md`'s 2026-08-23 entries for the full round-by-round
+account.
 
 Still open before Phase 5's exit criteria are fully met: the
 30-minute-idle-then-cold-open test (now easier to re-verify with the keep-warm

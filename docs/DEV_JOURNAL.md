@@ -4798,3 +4798,128 @@ properly instead of reactively.
   be known until this is pushed and re-run for real. Flagged as open, not
   assumed closed just because this round's specific error is now
   addressed.
+
+---
+
+## 2026-08-23 — Ingestion cron, rounds 4-6: a real 401, then a real validation-config gap, then a real always-failing known gap
+
+**What happened**
+
+Pushed round 3's fix (`5a596b9`). Owner triggered again using the "Run
+workflow" button specifically (not "Re-run failed jobs," which round 3's
+own confusion had traced to — GitHub's re-run replays the *original*
+triggering commit, not the branch's current tip, which is why two earlier
+attempts kept showing the identical stale failure). Confirmed via the
+Actions API before drawing any conclusion, same discipline as every round
+so far — `run_number` incremented, `run_attempt: 1`, `head_sha` matched
+the just-pushed commit.
+
+- **Round 4:** the `Illegal header value` error was gone — `env_secret()`
+  worked, the request was well-formed enough to actually reach GitHub's
+  API this time. It came back `401 Unauthorized`. A materially different
+  signal from a header-syntax rejection: GitHub was saying the *credential
+  itself* was invalid, not malformed. Nothing left to fix in code at this
+  point — `env_secret()` already handles whitespace correctly regardless
+  of position, and a 401 with a well-formed header means the token's
+  actual character content is wrong. Recommended the owner verify the PAT
+  hadn't expired (fine-grained PATs carry a mandatory expiration) and
+  re-copy it a way that couldn't reintroduce the same class of corruption
+  — a PowerShell one-liner (`Get-Content` + `Select-Object`/`Substring` +
+  `Set-Clipboard`) that reads the exact value from `.env` straight to the
+  clipboard, with no manual visual-selection step for a long value to get
+  mangled during.
+- **Round 5:** `GITHUB_TOKEN` fixed — the run got all the way through
+  `github_loader.load()` and local embedding this time, failing much
+  later with Supabase's own `postgrest` client reporting `401 Invalid API
+  key... service_role`. Same diagnosis, same fix, different secret: gave
+  the owner the identical clipboard-copy technique for
+  `SUPABASE_SERVICE_KEY`.
+- **Round 6 — the first run where `ingestion.ingest` itself actually
+  succeeded.** Real progress, but the workflow's second step,
+  `ingestion.validate`, then failed on its own out-of-scope spot check
+  ("pizza topping" incorrectly matched). Read the output closely rather
+  than assuming another secret was wrong: the printed header showed
+  `threshold=0.35`, not the real deployed `0.55` — a genuinely different,
+  new class of bug, this time in the workflow's own design rather than a
+  secret's value. `ingest.yml` never set `RETRIEVAL_THRESHOLD`/
+  `RETRIEVAL_TOP_K` at all, so `ingestion/validate.py` silently fell back
+  to its own built-in default (`0.35`) — a stale placeholder that never
+  got updated after Phase 3's real threshold tuning landed on `0.55`, and
+  which nothing had exercised before, since every other environment that
+  runs this code (local dev, the old `ingest.py`/`validate.py` runs this
+  session) always had `.env`'s real value present. Fixed by adding both as
+  plain (non-secret) `env:` values in the workflow, matching
+  `agent/config.py`'s real deployed configuration, and updated
+  `validate.py`'s own fallback defaults from `0.35`/`4` to the real
+  `0.55`/`5` at the same time, so the stale-default trap can't bite again
+  in any other environment that happens to omit these two env vars.
+- **Verified the threshold fix locally before pushing again** — and
+  found a second, genuinely different problem in the same output: even at
+  the correct `0.55`, the CGPA spot check still failed, because it's the
+  same known, already-documented `bge-small-en-v1.5` weakness
+  (`CLAUDE.md` open item 4) `tests/test_retrieval_suite.py` already tracks
+  as `xfail(strict=True)`. `validate.py`'s pass/fail is strict and
+  all-or-nothing, with no concept of "known, accepted gap" the way the
+  pytest suite does — left as-is, this known issue would have failed the
+  "Validate corpus" step *every single scheduled run, forever*, and
+  GitHub emails the repo owner on every workflow failure by default. That
+  is exactly the shape of alert fatigue that eventually trains someone to
+  stop opening failure emails at all — which would have quietly defeated
+  the entire reason this step exists (per `DATA_INGESTION.md` Sec9: catch
+  a *real* bad refresh loudly). Added a small `_KNOWN_GAPS` mapping to
+  `validate.py`, mirroring the pytest suite's own known-gaps list, so this
+  one case prints as a visible, flagged "KNOWN GAP" line rather than
+  silently vanishing *or* permanently failing the run.
+
+**Why**
+
+Every round in this multi-day thread followed the same discipline for a
+reason: confirm what actually ran (via the real GitHub Actions API, not
+trust in what "I triggered it" implies) before diagnosing anything, and
+read the *specific* error rather than pattern-matching it to the last
+one. Rounds 4 and 5 looked, at a glance, like they could be "the
+`env_secret()` fix wasn't thorough enough" — but the error class
+(`401`, not `LocalProtocolError`) was different enough to rule that out
+immediately once actually read, which is what kept this from turning into
+a wild goose chase rewriting an already-correct helper function. Round 6's
+two-part fix mattered for the same reason as round 3's generalization: a
+known, accepted, currently-untracked-in-CI weakness left unaddressed would
+have made this cron cry wolf daily — worse than not having the validation
+step at all, since a validation gate nobody trusts is no gate.
+
+**Decisions made**
+
+- `RETRIEVAL_THRESHOLD=0.55`/`RETRIEVAL_TOP_K=5` are now explicit,
+  non-secret `env:` values in `ingest.yml` — deliberately not secrets,
+  since they're tuning config already documented in `.env.example` and
+  `CLAUDE.md`, not sensitive.
+- `ingestion/validate.py`'s own fallback defaults are now `0.55`/`5`,
+  matching reality, not Phase 2's original `0.35`/`4` placeholders that
+  nothing had actually exercised until this cron did.
+- The CGPA `_KNOWN_GAPS` entry is deliberately still *visible* in output
+  (`KNOWN GAP (not counted)`, not silently omitted) — the goal was to stop
+  it from being treated as a failure, not to hide that it exists.
+
+**Verification**
+
+- Confirmed via the real GitHub Actions API before every diagnosis in
+  this entry which commit each run actually executed against — caught
+  the "Re-run failed jobs replays the original commit" trap specifically
+  because of this habit, not luck.
+- Round 6's fix verified locally with the *exact* CI env values
+  (`RETRIEVAL_THRESHOLD=0.55 RETRIEVAL_TOP_K=5 uv run python -m
+  ingestion.validate`) before pushing — real output: `Retrieval
+  validation: PASS`, `All validations passed.`, exit code `0`, CGPA still
+  printed as a visible known gap, not hidden.
+- Re-ran the full `-m "not integration"` pytest subset afterward — 3
+  passed, unaffected by the `validate.py` changes.
+- Scanned `.github/workflows/ingest.yml` and `ingestion/validate.py` for
+  secret-shaped strings before staging — none found (the new env values
+  are plain floats/ints, not credentials).
+- `git status --short` after staging → exactly the two intended files.
+- Committed as `5d29e6d`, work only, separate from this journal entry.
+- **Not yet pushed or re-verified live** — this is the fourth round of
+  fixes in this thread; the discipline established in every prior round
+  (confirm the run's actual commit via the API, don't assume a pushed fix
+  "worked" from the owner's report alone) applies here too, not relaxed
+  just because this feels close to done.
