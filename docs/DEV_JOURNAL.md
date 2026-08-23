@@ -4230,3 +4230,108 @@ endpoint.
   earlier in this entry — not yet pushed as of this commit; the owner's
   standing instruction is to ask first, so this is flagged rather than
   pushed automatically.
+
+**Same-day addendum: pushed and verified live.** Owner asked to push.
+`git diff --stat origin/main..HEAD` showed exactly the two expected commits
+(the rate-limit work plus its journal entry) — pushed, and Render's
+GitHub-connected auto-deploy picked it up fast. Verified the real thing
+instead of trusting the dashboard: an `until`-loop firing 6 real
+`POST /token` requests at `https://voice-twin-api-46lk.onrender.com/token`
+every 10s. First attempt already showed the new behavior live —
+`200 200 200 200 200 429` — confirming both the limiter itself and the
+`--forwarded-allow-ips` fix are functioning together against Render's real
+proxy, not just in local dev. `GET /health` (the keep-warm cron's target)
+still a clean `200` afterward. Named the residual gap honestly rather than
+overclaiming: this confirms the mechanism works end-to-end in production,
+but distinguishing "limits per real visitor" from "limits the whole site as
+one bucket" still needs a second real distinct client IP to test from,
+which this session doesn't have — the same limitation flagged in
+`TEST_PLAN.md` Sec6, still open.
+
+---
+
+## 2026-08-23 — Verified zero secrets in the frontend bundle
+
+**What happened**
+
+Next to-do item: `TEST_PLAN.md` Sec6's "frontend bundle contains no API
+keys," spot-checked once during the first deployment (2026-08-21) and never
+re-verified since. A pure verification pass — no code changed.
+
+- Checked the *mechanism* before checking the *output*: read
+  `web/vite.config.ts` directly. No `envDir` override, so Vite only ever
+  reads env files from `web/` itself (its default root) — it structurally
+  cannot see the repo-root `.env` that holds the real secrets
+  (`LIVEKIT_API_SECRET`, `GEMINI_API_KEY`, `SUPABASE_SERVICE_KEY`,
+  `DATABASE_URL`, `DEEPGRAM_API_KEY`, `GITHUB_TOKEN`), regardless of what
+  gets imported or referenced in `web/src`. This is the strongest kind of
+  evidence available — "there's no path for this to happen," not just "we
+  looked today and didn't find it."
+- Checked what *is* exposed to the client on purpose: `web/.env.local`
+  (correctly gitignored) and `web/.env.example` both carry only
+  `VITE_TOKEN_SERVICE_URL` — the one env var actually referenced via
+  `import.meta.env` anywhere in `web/src` (`App.tsx`). Not sensitive by
+  design; the frontend already calls that URL directly from the browser.
+- Then verified empirically, on top of the structural argument, rather than
+  stopping at "the mechanism should prevent it": built the production
+  bundle locally (`npm run build`) and wrote a check that greps the built
+  `dist/` for the *literal value* of every real secret in `.env`
+  (`LIVEKIT_API_KEY`, `LIVEKIT_API_SECRET`, `DEEPGRAM_API_KEY`,
+  `GEMINI_API_KEY`, `SUPABASE_SERVICE_KEY`, `DATABASE_URL`,
+  `GITHUB_TOKEN`) — deliberately structured so the actual secret values
+  never print anywhere, only a clean/leak verdict per key. All seven
+  clean. Also ran a generic secret-shape pattern scan (`AIza...`,
+  `github_pat_...`, `sk-...`, `postgresql://...`, PEM headers) — nothing.
+- **Went further than the checklist item technically asks and checked the
+  actual live deployed bundle**, not just a local build — fetched
+  `ai-digital-twin-blue.vercel.app`'s real JS bundle directly via `curl`
+  and re-ran the identical secret-value and pattern scans against it.
+  Also clean. This matters because Vercel's dashboard env config is a
+  separate configuration surface from anything in this repo — a local
+  build passing doesn't prove production does, only checking production
+  directly does. Confirmed along the way that the live bundle correctly
+  bakes in the real Render Token Service URL
+  (`https://voice-twin-api-46lk.onrender.com`), so the check was against
+  the actual production artifact, not a stale or differently-configured
+  build.
+
+**Why**
+
+A frontend bundle is public by construction — anyone can view-source or
+download it, so "checked once at first deploy" isn't a standing guarantee;
+it only reflects that one build. Checking the live artifact directly,
+rather than trusting that a local build represents what Vercel actually
+shipped, is the same "verify the real thing, not a proxy for it" standard
+this project has applied to Fly.io logs, Render's cold-start timing, and
+the LiveKit SDK itself — applied here to a security check instead of a
+functional one. Structuring the value-check so secrets never print,
+even to this session's own output, matters for the same reason `.env` is
+gitignored in the first place: minimizing how many places a real credential
+ever has to exist in plaintext, including transient tool output.
+
+**Decisions made**
+
+- None beyond confirming the existing architecture (no `envDir` override,
+  `VITE_`-prefixed-only exposure) is sufficient and doesn't need changing.
+
+**Verification**
+
+- Read `web/vite.config.ts`'s actual content before making any claim about
+  Vite's env-loading scope.
+- `grep -rn "import.meta.env" web/src` → exactly one reference,
+  `VITE_TOKEN_SERVICE_URL`, confirming nothing else is even wired up to be
+  exposed.
+- `git check-ignore -v web/.env.local` → correctly matched and excluded.
+- Real `npm run build` run, then a real value-and-pattern scan of the
+  resulting `web/dist/` — not inferred from source inspection alone.
+- Real `curl` of the live production bundle, then the identical scan
+  against it — the actual currently-served artifact, not a proxy for it.
+- Temp files from the production-bundle fetch cleaned up after the check;
+  nothing left behind.
+- Scanned `docs/TEST_PLAN.md`'s own diff for secret-shaped strings before
+  staging (the check's write-up describes the check, so worth confirming
+  the write-up itself didn't accidentally quote a real value) — none found.
+- `git status --short` after staging → only `docs/TEST_PLAN.md`; `web/dist/`
+  correctly stayed untracked (gitignored).
+- Committed as `aa02be2`, separate from this journal entry. No push needed
+  — a docs-only change with no deployable code.

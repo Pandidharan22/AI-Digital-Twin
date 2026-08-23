@@ -249,14 +249,26 @@ verified by reasoning + source, not yet empirically confirmed with two real
 distinct client IPs post-deploy. See `docs/TEST_PLAN.md` Sec6 and
 `docs/DEV_JOURNAL.md`'s 2026-08-23 entry.
 
+`POST /token`'s rate limiting is now pushed and confirmed live
+(2026-08-23): a real 6-request burst against production Render showed
+`200 200 200 200 200 429`, `/health` unaffected. Distinguishing true
+per-visitor limiting from "the whole site sharing one bucket" still needs a
+second real distinct client IP to test from, which this session doesn't
+have — flagged, not closed.
+
+Zero-secrets-in-frontend-bundle is also now reverified (2026-08-23), not just
+spot-checked once at first deploy: `web/vite.config.ts` has no `envDir`
+override (Vite structurally can't read the repo-root `.env`), and both a
+local production build and the **live deployed bundle** were scanned for
+every real secret's literal value plus generic secret-shape patterns —
+clean both times. See `docs/TEST_PLAN.md` Sec6.
+
 Still open before Phase 5's exit criteria are fully met: the
 30-minute-idle-then-cold-open test (now easier to re-verify with the keep-warm
 cron in place — worth confirming it actually prevents the sleep, not just
-assuming), mobile Safari/cellular verification, the GitHub Actions **ingestion**
-cron (distinct from the keep-warm cron above — refreshes the corpus from
-GitHub, not yet built), and confirming zero secrets in the frontend bundle by
-inspection (spot-checked once already during the first deployment, not
-re-verified since).
+assuming), mobile Safari/cellular verification, and the GitHub Actions
+**ingestion** cron (distinct from the keep-warm cron above — refreshes the
+corpus from GitHub, not yet built).
 
 **Blocked by:** Nothing functionally. Open items: (1) the Phase 1 barge-in
 timing (~455ms) number is still unrevisited since Phase 1 — see (2a) below for
