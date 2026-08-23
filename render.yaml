@@ -4,7 +4,15 @@ services:
     runtime: python
     plan: free
     buildCommand: pip install -r api/requirements.txt
-    startCommand: uvicorn api.main:app --host 0.0.0.0 --port $PORT
+    # --forwarded-allow-ips='*': uvicorn's ProxyHeadersMiddleware only trusts
+    # X-Forwarded-For from 127.0.0.1 by default (verified against the
+    # installed package's source, not assumed) -- without this, every
+    # request would show Render's load balancer as the client, and the
+    # per-IP rate limiter in api/main.py would limit the whole site as one
+    # visitor instead of each real one individually. Safe to trust broadly
+    # here specifically because Render's load balancer is the only path a
+    # public request can take to reach this service.
+    startCommand: uvicorn api.main:app --host 0.0.0.0 --port $PORT --forwarded-allow-ips='*'
     healthCheckPath: /health
     envVars:
       - key: LIVEKIT_URL

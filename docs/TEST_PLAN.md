@@ -241,7 +241,16 @@ Fix the top three.
 - [ ] `git log -p` shows no committed secrets
 - [ ] Token endpoint rejects malformed requests
 - [ ] Tokens expire ≤ 15 min
-- [ ] Token endpoint rate-limits repeated requests
+- [x] Token endpoint rate-limits repeated requests — `POST /token` limited to
+      5/minute + 30/hour per client IP via `slowapi` (2026-08-23). Verified
+      locally: 5 real requests succeed, the 6th and 7th return `429` with
+      CORS headers intact, `GET /health` (the keep-warm cron's target)
+      confirmed unaffected. `render.yaml`'s `--forwarded-allow-ips='*'` fix
+      (needed so the limiter sees each real visitor's IP, not Render's load
+      balancer's) is verified by source-reading uvicorn's own
+      `ProxyHeadersMiddleware` default, not yet empirically confirmed
+      against two distinct real client IPs post-deploy. See
+      `docs/DEV_JOURNAL.md`'s 2026-08-23 entry.
 - [ ] Supabase service key is not reachable from the client
 
 ---
