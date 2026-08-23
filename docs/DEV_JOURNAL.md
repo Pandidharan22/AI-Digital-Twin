@@ -4510,3 +4510,134 @@ two gaps from scratch.
   wrote the A5 fix directly to the same live Supabase project
   `agent/retrieval.py` queries at runtime (same reasoning as the A1 fix),
   and the test suite itself is local dev tooling with nothing to deploy.
+
+---
+
+## 2026-08-23 — GitHub Actions ingestion cron
+
+**What happened**
+
+Last item from the Phase 5 checklist that was still fully unbuilt (distinct
+from the keep-warm cron, which pings the Token Service, not the corpus):
+`docs/DATA_INGESTION.md` Sec8 recommended a daily GitHub Actions `schedule`
+workflow running `ingest.py`, and named the design question up front —
+`corpus/*.pdf` and `corpus/context.md` are gitignored (the Phase 2 privacy
+decision), so a workflow that checks out this repo genuinely cannot see
+them. Worked out whether that's a blocker or fine before writing any YAML,
+by reading `ingestion/ingest.py`'s `run()` again closely: the stale-row
+delete step only iterates `hashes_by_source`, built exclusively from
+*this run's own* `records` — so a source that never produced any records
+this run (because its file wasn't there to load) is never even considered
+for deletion, and its existing Supabase rows are left completely alone.
+`ingestion/loaders/markdown_loader.py`'s `load_corpus_markdown()` was also
+checked directly to confirm it already excludes `README.md` (the one
+corpus file that *is* committed) by name, so there was no risk of the
+workflow accidentally trying to ingest that documentation file as if it
+were user content.
+
+- **Verified the "safe by design" claim for real, without touching the
+  live database.** Tried to literally simulate the CI environment locally
+  by moving the two private corpus files aside and running the real
+  `uv run python -m ingestion.ingest` — this was correctly **blocked by
+  the session's own auto-mode permission classifier**, since it's a
+  database-mutating action. Respected the block rather than working around
+  it: restored the two files immediately (confirmed back in place via
+  `ls`), then re-verified the same claim a safer way — called
+  `ingestion.ingest._load_all()` directly (the pure loader/chunker
+  pipeline, no Supabase client touched at all) with the files still moved
+  aside, and printed which `source` values it would produce. Result:
+  exactly the six curated GitHub repo names, `AI Engineer Resume.pdf` and
+  `context.md` both absent — the read-only proof that a live run in this
+  configuration could never touch those two sources' rows, obtained
+  without needing the writes to actually happen. Restored the files
+  immediately afterward inside the same script (a bash `trap` on `EXIT`,
+  so the restore runs even if the Python check itself had errored) and
+  confirmed via a fresh `ls corpus/` that all three real files were back —
+  the corpus directory was never left in a modified state at any point a
+  later command could have observed it wrong.
+- Wrote `.github/workflows/ingest.yml`: `actions/checkout@v4` +
+  `actions/setup-python@v5` (3.12, matching local dev) +
+  `astral-sh/setup-uv@v10.0.1` (checked this is a real, actively
+  maintained Astral action and its current usage syntax via a live fetch
+  of its own repo before depending on it, not from memory) + `uv sync
+  --frozen` + `ingestion.ingest` + `ingestion.validate` (Sec9's own
+  validation requirement — a bad refresh now fails the job loudly, which
+  GitHub emails the repo owner about by default, rather than silently
+  degrading retrieval until someone happens to notice).
+- **Real naming gotcha, caught before it could break the first run:**
+  GitHub Actions reserves the secret name `GITHUB_TOKEN` for its own
+  auto-generated, repo-scoped token — a repository secret literally named
+  `GITHUB_TOKEN` can't be created. The actual fine-grained PAT
+  `github_loader.py` needs has to live under a different secret name
+  (`INGEST_GITHUB_PAT`), mapped in the workflow's `env:` block to the
+  `GITHUB_TOKEN` env-var name the Python code actually reads via
+  `os.environ["GITHUB_TOKEN"]` — no code change needed, just correct
+  workflow wiring.
+- `GITHUB_USERNAME` is set as a plain literal in the workflow (not a
+  secret) — it's a public GitHub username, not sensitive, same reasoning
+  this project already applies elsewhere (e.g. `OWNER_NAME`).
+- Validated the workflow YAML with a real `yaml.safe_load()` before
+  committing (same habit as `keep-warm.yml`'s own verification) — parsed
+  cleanly, schedule/jobs/steps all structured as intended.
+
+**Why**
+
+The corpus-files-absent question mattered because getting it wrong either
+way would have been bad: assuming it's fine without checking could have
+silently wiped the resume/context.md chunks on the very first scheduled
+run (a real production data-loss risk for a corpus that took real
+interview time to build in Phase 2), while assuming it's *not* fine and
+building some workaround (committing a scrubbed copy, fetching the files
+from a private location) would have added real complexity to solve a
+problem that turns out not to exist, given how `ingest.py` was already
+designed. Respecting the permission classifier's block rather than finding
+a workaround (e.g. running the mutating command a different way) matters
+for the same reason the rest of this project treats database writes
+carefully — the safer read-only check answers the exact same question with
+zero risk, so there was no real reason to need the blocked path at all.
+
+**Decisions made**
+
+- Daily schedule (`0 6 * * *`), matching `DATA_INGESTION.md` Sec8's own
+  recommendation — READMEs for six personal repos don't change often
+  enough to need anything tighter, and this is a very different traffic
+  pattern from the keep-warm cron's every-10-minutes cadence.
+- `ingestion.validate` runs as a required step after `ingestion.ingest`,
+  not left as a manual follow-up — Sec9 frames validation as part of "every
+  ingestion run," not an optional extra.
+- Not yet verified against a real scheduled or manual run — this session
+  has no `actions:write`-scoped credential (same constraint the keep-warm
+  cron's original entry hit) and, more fundamentally, the four repo
+  secrets this workflow needs don't exist yet; only the owner can add
+  them via GitHub's repo settings. Flagged as the explicit next step
+  rather than assumed done because the YAML is syntactically valid.
+
+**Verification**
+
+- Read `ingestion/ingest.py`'s `run()` and `ingestion/loaders/
+  markdown_loader.py`'s `load_corpus_markdown()` directly before writing
+  any workflow YAML, not assumed from how the rest of the pipeline is
+  described elsewhere in the docs.
+- The core safety claim (missing corpus files → only GitHub sources
+  touched) was verified with a real, live call to `_load_all()` against
+  this repo's actual `corpus/` directory in its actual gitignored-files-
+  absent state — not reasoned about in the abstract — while never once
+  calling anything that writes to Supabase.
+- Confirmed `astral-sh/setup-uv` is real, current, and used the syntax
+  from a live fetch of its own repository, not recalled from training data.
+- `yaml.safe_load()` on the finished workflow file — valid, correct
+  structure.
+- Scanned `.github/workflows/ingest.yml` for secret-shaped strings before
+  staging — none found (it only ever references `secrets.*` by name, never
+  a literal value).
+- `git status --short` after staging → exactly the one new file.
+- Committed as `801d154`, work only, separate from this journal entry.
+- **Push is necessary, and unusually strictly so for this particular
+  change** — a GitHub Actions workflow only exists to GitHub once the
+  `.github/workflows/` file is actually on the remote; a local-only commit
+  does nothing at all, unlike most of this session's other changes where
+  local verification was the meaningful bar. Flagged to the owner
+  explicitly, along with the specific four secret names/sources they need
+  to add via GitHub's repo settings before this can run for real — this
+  session has no credential scoped to add repo secrets, so that step is
+  the owner's regardless of the push decision.

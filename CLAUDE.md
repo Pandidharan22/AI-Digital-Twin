@@ -276,12 +276,25 @@ Current corpus state: 11/13 Suite A, 6/7 Suite B, with all three known gaps
 (A7, CGPA, salary) tracked as `xfail(strict=True)`, not silently accepted.
 See `docs/TEST_PLAN.md` Sec1-2 and `docs/DEV_JOURNAL.md`'s 2026-08-23 entry.
 
+The GitHub Actions **ingestion** cron now exists (2026-08-23,
+`.github/workflows/ingest.yml`, distinct from the keep-warm cron above) —
+daily schedule + `workflow_dispatch`, runs `ingestion.ingest` then
+`ingestion.validate`. `corpus/*.pdf`/`context.md` stay gitignored and are
+never checked out in CI; confirmed safe by design (not assumed) via a
+read-only `_load_all()` dry run showing only the six GitHub-sourced repos
+get produced when those files are absent, so their existing Supabase rows
+are never touched. **Not yet pushed, and needs four repo secrets** (`DATABASE_URL`,
+`SUPABASE_URL`, `SUPABASE_SERVICE_KEY`, `INGEST_GITHUB_PAT`) added via
+GitHub's repo settings before it can run even once pushed; this session
+has no credential scoped to add them. See `docs/DEV_JOURNAL.md`'s
+2026-08-23 entry.
+
 Still open before Phase 5's exit criteria are fully met: the
 30-minute-idle-then-cold-open test (now easier to re-verify with the keep-warm
 cron in place — worth confirming it actually prevents the sleep, not just
-assuming), mobile Safari/cellular verification, and the GitHub Actions
-**ingestion** cron (distinct from the keep-warm cron above — refreshes the
-corpus from GitHub, not yet built).
+assuming), mobile Safari/cellular verification, and confirming the
+ingestion cron ran successfully at least once (blocked on the secrets
+above).
 
 **Blocked by:** Nothing functionally. Open items: (1) the Phase 1 barge-in
 timing (~455ms) number is still unrevisited since Phase 1 — see (2a) below for
