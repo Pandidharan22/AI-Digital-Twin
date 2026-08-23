@@ -4054,3 +4054,179 @@ open-ended to-do item into one specific, evidence-backed, one-block fix.
   push — this commit, plus the still-unpushed `SuggestedQuestions.tsx`
   revert from the previous task, are both held per the owner's standing
   instruction to ask before pushing frontend changes.
+
+---
+
+## 2026-08-22/23 — Pushed the two queued frontend commits; then rate-limited POST /token
+
+**What happened (push)**
+
+Owner asked to push the two frontend commits held from the previous two
+tasks (`5e81a39`'s `SuggestedQuestions.tsx` revert, `c74ce0d`'s mic-button
+fix) — six commits total were actually ahead of `origin/main` at that point,
+since the retrieval fix and latency-measurement journal entries had also
+landed locally. Checked `git diff --stat origin/main..HEAD` before pushing
+rather than assuming the six were safe together: confirmed zero changes to
+`agent/` or `api/`, so the Fly.io worker and (at that point) the Token
+Service were structurally unaffected regardless — only `web/`, docs, and
+local tooling (`tests/`, `.claude/launch.json`) were in the diff. Pushed all
+six as one `git push`, since GitHub's push model doesn't allow shipping a
+subset of an already-linear branch history, and there was no reason to hold
+the other four back once the risk check was done.
+
+Verified live rather than trusting the dashboard: `curl`'d
+`https://ai-digital-twin-blue.vercel.app/` for a clean `200`, then fetched
+the deployed JS bundle directly and grepped for `"Tell me about your most
+recent role"` (the reverted spec wording) — present, confirming Vercel's
+GitHub-connected auto-deploy had already picked up the push within about a
+minute of it landing, without needing to poll or wait idle.
+
+**What happened (rate limiting)**
+
+Then picked up the next to-do item on the owner's list: rate-limiting
+`POST /token`, the Token Service's one public, unauthenticated endpoint.
+Explained its purpose to the owner directly (see below) before implementing,
+since they'd asked for that alongside the fix.
+
+- Chose `slowapi` (wraps the `limits` library) over a hand-rolled in-memory
+  counter — a hand-written version would need to get concurrency-safety,
+  IP-key extraction, and stale-entry eviction right on its own, and this is
+  exactly the kind of small-but-easy-to-get-subtly-wrong utility this
+  project has otherwise preferred a well-tested library for (same reasoning
+  as using `tiktoken`/`sentence-transformers` rather than writing a
+  tokenizer or embedding model from scratch). Verified it's real and current
+  before depending on it — PyPI shows `0.1.10` (June 2026), actively
+  maintained, used in production elsewhere — then read the actual installed
+  source (`slowapi/extension.py`, `util.py`, `errors.py`) rather than
+  trusting a README example, per `CLAUDE.md` rule #2's spirit applied to a
+  new dependency instead of the LiveKit SDK it was written for.
+- **Real finding from reading the installed source, not assumed:**
+  `slowapi.util.get_remote_address` — the standard key function for
+  per-IP limiting — just reads `request.client.host` directly. It does
+  *not* parse `X-Forwarded-For` itself (a *different* helper in the same
+  file, `get_ipaddr`, does that, and does it via a header lookup
+  (`X_FORWARDED_FOR` with an underscore) that doesn't match the real
+  HTTP header name (`X-Forwarded-For`, hyphenated) — a real bug in that
+  helper, noted but irrelevant here since `get_remote_address` was the
+  right choice regardless, per `get_ipaddr`'s own docstring: "a more
+  robust method... is provided by uvicorn's ProxyHeadersMiddleware").
+  So the correctness of the whole limiter depends on `request.client.host`
+  already being the real visitor IP by the time slowapi sees it — which is
+  uvicorn's job, not slowapi's.
+- Checked whether that actually happens on this deployment rather than
+  assuming it does: read `uvicorn/middleware/proxy_headers.py` and
+  `uvicorn/config.py` directly. `ProxyHeadersMiddleware` is on by default,
+  but only trusts `X-Forwarded-For` from a connecting peer inside
+  `FORWARDED_ALLOW_IPS`, which defaults to `"127.0.0.1"` — and
+  `render.yaml`'s existing `startCommand` never set that flag. Render's own
+  docs (fetched live, both the general web-services page and a
+  headers-specific anchor) don't document their exact proxy IP or confirm
+  `X-Forwarded-For` behavior explicitly, so rather than guess whether
+  Render's load balancer connects over loopback, fixed this the safe way
+  that doesn't depend on knowing their internal topology: added
+  `--forwarded-allow-ips='*'` to `render.yaml`'s `startCommand`. This is
+  sound specifically *because* Render's load balancer is the only path a
+  public request can take to reach this service — there's no direct route
+  an outside caller could use to spoof `X-Forwarded-For` past it. Without
+  this fix, every visitor would have appeared to share the load balancer's
+  IP, and the limiter would have throttled the whole site as if it were one
+  visitor instead of each real one individually — a correctness bug that
+  would have made the feature actively harmful, not just ineffective.
+- Wired `Limiter(key_func=get_remote_address)` into `api/main.py`,
+  registered `RateLimitExceeded`'s exception handler, and decorated
+  `create_token` with `@limiter.limit("5/minute;30/hour")` — read
+  `extension.py`'s `limit()` decorator source directly and confirmed the
+  per-route decorator raises inline during the endpoint call (a real
+  `HTTPException` subclass), which Starlette's normal exception-handler
+  dispatch catches *inside* `CORSMiddleware`'s wrapping — meaning
+  `SlowAPIMiddleware` (a separate, optional piece slowapi also ships) isn't
+  needed for this single-decorated-route case, and CORS headers should
+  survive on a blocked response without extra work. Verified this claim
+  rather than trusting the source-reading alone (see Verification).
+- Chose `5/minute` + `30/hour` (not just one window): generous for a real
+  visitor reloading a flaky connection a few times, tight against a script
+  minting rooms in a loop; the hourly cap adds a second guard against
+  low-and-slow abuse sitting just under the per-minute rate.
+- Added `slowapi` via `uv add` (pulls in `limits`, `deprecated`, `wrapt`)
+  and pinned `slowapi==0.1.10` in `api/requirements.txt` — following that
+  file's existing convention of listing only direct imports and letting
+  `pip` resolve the rest, same as the existing `fastapi`/`uvicorn` entries
+  there don't list `starlette`/`anyio` either.
+
+**Why**
+
+Explained directly to the owner: `POST /token` has no login, no CAPTCHA,
+and no cost to the caller by design — that's the point, since a real
+first-time visitor needs to reach it before anything else happens, so it
+can't be gated behind auth. But every call is real money and real quota
+downstream: a new LiveKit room, a dispatched Fly.io agent process, and
+(once a visitor speaks) Deepgram STT/TTS and Gemini calls. An unlimited
+version of this endpoint is a script away from burning through the Gemini
+free-tier RPM budget, the Deepgram credit, or running up a real Fly.io
+bill — the exact kind of "someone else's traffic becomes your production
+incident" surface a hosted, publicly-linked hiring-eval project is
+specifically exposed to. Rate limiting is the standard mitigation for
+exactly this shape of problem: an open, unauthenticated, cost-incurring
+endpoint.
+
+**Decisions made**
+
+- `slowapi` over hand-rolled limiting, permanently — matches the
+  project's existing preference for a small well-tested dependency over
+  reinventing something with real correctness edge cases (concurrency,
+  memory growth, IP parsing).
+- `render.yaml`'s `--forwarded-allow-ips='*'` is scoped to this one
+  service's deployment config, not a global trust decision — justified by
+  Render's specific network topology (single ingress path), not applied
+  as a default anywhere else in the project.
+- `5/minute;30/hour` are the limits going forward; not derived from
+  measured real traffic (there isn't any at meaningful volume yet), so
+  worth revisiting if real usage ever shows legitimate visitors tripping
+  it.
+- Did not add `SlowAPIMiddleware` — unnecessary for a single decorated
+  route, and adding unused middleware would be exactly the kind of
+  complexity this project's working style says to avoid.
+
+**Verification**
+
+- Read `slowapi`'s actual installed source (`extension.py`, `util.py`,
+  `middleware.py`, `errors.py`) and `uvicorn`'s actual installed source
+  (`proxy_headers.py`, `config.py`) before writing any integration code —
+  not from either package's README or from memory.
+- Fetched Render's own docs live (general web-services page, a
+  headers-specific anchor) before making any claim about their proxy
+  behavior — found they don't document it explicitly, which is itself the
+  reason the fix was designed to not depend on knowing it.
+- `uv run python -c "import api.main"` and `py_compile` clean before
+  running anything live.
+- **Ran the real thing, not a mental trace:** started the Token Service
+  locally (`uv run uvicorn api.main:app --port 8000`) and fired 7 real
+  `POST /token` requests via `curl`. Requests 1–5 returned real `200`s with
+  real, valid-looking LiveKit JWTs in the body; requests 6–7 returned `429`
+  with body `{"error":"Rate limit exceeded: 5 per 1 minute"}`. Checked the
+  6th/7th response's headers directly and confirmed
+  `access-control-allow-origin` was present on the *blocked* response too —
+  the CORS-survives-the-exception-handler claim above, empirically
+  confirmed, not just reasoned about.
+- Separately fired 8 rapid `GET /health` requests (the keep-warm cron's
+  actual target) and confirmed all 8 returned `200` — the limiter, scoped
+  to the `/token` route's own decorator, doesn't touch it.
+- **Named limitation, not glossed over:** the `--forwarded-allow-ips`
+  fix's correctness rests on architecture reasoning plus uvicorn's real
+  source, not on an empirical test against Render's actual proxy with two
+  distinct real client IPs (this session has one real network path to
+  test from). Flagged in `TEST_PLAN.md` Sec6 as verified-by-reasoning
+  rather than fully empirically closed — the honest way to check it after
+  deploy is watching Render's own request logs for distinct real visitor
+  IPs rather than one repeated internal address, left as a note for
+  whoever next has dashboard access at a moment with real traffic.
+- Scanned `api/main.py`, `api/requirements.txt`, `render.yaml`,
+  `docs/TEST_PLAN.md`, `pyproject.toml`, and `uv.lock` for secret-shaped
+  strings before staging — none found (`uv.lock`'s new lines are package
+  hashes for `slowapi`/`limits`/`deprecated`/`wrapt`, not credentials).
+- `git status --short` after staging → exactly the six intended files.
+- Committed as `5954335`, work only, separate from this journal entry.
+- **Push needed to reach production**, same as the frontend commits
+  earlier in this entry — not yet pushed as of this commit; the owner's
+  standing instruction is to ask first, so this is flagged rather than
+  pushed automatically.

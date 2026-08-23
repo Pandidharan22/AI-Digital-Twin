@@ -237,6 +237,18 @@ returning wrong answers on the owner's local network even against an explicit
 filtering), not a Render problem, and left for the owner to resolve since it's
 outside this session's reach.
 
+`POST /token` is now rate-limited (2026-08-23): 5/minute + 30/hour per client
+IP via `slowapi`, with `render.yaml`'s `startCommand` fixed to pass
+`--forwarded-allow-ips='*'` so the limiter sees each real visitor's IP rather
+than Render's load balancer's (verified against uvicorn's real installed
+source — its `ProxyHeadersMiddleware` only trusts `127.0.0.1` by default).
+Verified locally end-to-end (5 requests succeed, 6th/7th `429` with CORS
+intact, `/health` unaffected); not yet pushed, and the
+`--forwarded-allow-ips` fix's correctness against Render's actual proxy is
+verified by reasoning + source, not yet empirically confirmed with two real
+distinct client IPs post-deploy. See `docs/TEST_PLAN.md` Sec6 and
+`docs/DEV_JOURNAL.md`'s 2026-08-23 entry.
+
 Still open before Phase 5's exit criteria are fully met: the
 30-minute-idle-then-cold-open test (now easier to re-verify with the keep-warm
 cron in place — worth confirming it actually prevents the sleep, not just
@@ -260,8 +272,9 @@ cause was the chunk's own text never stating it was the most recent role, now
 fixed in `ingestion/loaders/pdf_loader.py` and reverified at rank 0 — see
 `docs/DEV_JOURNAL.md`'s 2026-08-22 entry. The frontend's suggested-question
 workaround (`TEST_PLAN.md`'s A2 phrasing) has been reverted back to the
-original spec wording, committed but **not yet pushed to Vercel** — ask before
-pushing; (4) `bge-small-en-v1.5` has a real, demonstrated weakness anchoring on short
+original spec wording and, along with the mobile mic-button fix, **pushed and
+live** (2026-08-22/23, verified via a direct curl of the deployed bundle);
+(4) `bge-small-en-v1.5` has a real, demonstrated weakness anchoring on short
 acronyms/numbers inside longer passages (the CGPA spot-check) — hybrid search
 compensates for that specific case, but the threshold sweep also surfaced a
 *different* weakness class: coincidental vocabulary-proximity false positives
