@@ -46,7 +46,8 @@ OUT_OF_SCOPE_QUERY = "What's your favorite pizza topping?"
 
 def validate_structure() -> bool:
     ok = True
-    with psycopg.connect(os.environ["DATABASE_URL"]) as conn:
+    # .strip(): see ingest.py's setup_db() -- same CI secret-paste hazard.
+    with psycopg.connect(os.environ["DATABASE_URL"].strip()) as conn:
         with conn.cursor() as cur:
             cur.execute("select count(*) from chunks")
             total = cur.fetchone()[0]
@@ -99,7 +100,9 @@ def _match(client, query: str, threshold: float, top_k: int):
 
 
 def validate_retrieval() -> bool:
-    client = create_client(os.environ["SUPABASE_URL"], os.environ["SUPABASE_SERVICE_KEY"])
+    client = create_client(
+        os.environ["SUPABASE_URL"].strip(), os.environ["SUPABASE_SERVICE_KEY"].strip()
+    )
     threshold = float(os.environ.get("RETRIEVAL_THRESHOLD", 0.35))
     top_k = int(os.environ.get("RETRIEVAL_TOP_K", 4))
 

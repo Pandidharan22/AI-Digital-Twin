@@ -35,7 +35,12 @@ def setup_db() -> None:
     similarity function need a direct Postgres connection. Idempotent: every
     statement in schema.sql is IF NOT EXISTS / OR REPLACE, safe to re-run.
     """
-    database_url = os.environ["DATABASE_URL"]
+    # .strip(): a GitHub Actions secret pasted with a trailing newline (an
+    # easy copy-paste artifact, confirmed live 2026-08-23 -- psycopg parsed
+    # the database name as "postgres\n" and failed) reaches os.environ
+    # verbatim, unlike .env values, which python-dotenv already trims. Local
+    # dev never hits this; CI secrets are exactly the boundary where it can.
+    database_url = os.environ["DATABASE_URL"].strip()
     sql = SCHEMA_PATH.read_text(encoding="utf-8")
     with psycopg.connect(database_url) as conn:
         with conn.cursor() as cur:
@@ -44,7 +49,9 @@ def setup_db() -> None:
 
 
 def _supabase_client() -> Client:
-    return create_client(os.environ["SUPABASE_URL"], os.environ["SUPABASE_SERVICE_KEY"])
+    return create_client(
+        os.environ["SUPABASE_URL"].strip(), os.environ["SUPABASE_SERVICE_KEY"].strip()
+    )
 
 
 def _load_all() -> List[ChunkRecord]:

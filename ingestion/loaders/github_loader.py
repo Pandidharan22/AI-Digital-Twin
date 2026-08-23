@@ -124,8 +124,12 @@ def _split_readme(readme: str) -> List[tuple]:
 
 
 def load() -> List[RawSection]:
-    username = os.environ["GITHUB_USERNAME"]
-    token = os.environ["GITHUB_TOKEN"]
+    # .strip(): same CI secret-paste hazard as ingest.py's setup_db() -- a
+    # trailing newline here would land inside the Authorization header
+    # value itself, which httpx/the server would reject outright rather
+    # than silently misparse the way psycopg's URL parsing did.
+    username = os.environ["GITHUB_USERNAME"].strip()
+    token = os.environ["GITHUB_TOKEN"].strip()
     headers = {
         "Authorization": f"Bearer {token}",
         "Accept": "application/vnd.github+json",
