@@ -5523,3 +5523,116 @@ over a symptom.
   only. A push reaches GitHub; Vercel's own auto-deploy (already confirmed
   working in earlier entries) would then pick it up, but that's a separate
   step from local verification and hasn't happened yet as of this commit.
+
+---
+
+## 2026-08-23 — Both pending deploys shipped: Vercel (UI merge) and Fly.io (prompt refinement)
+
+**What happened**
+
+Owner approved both remaining deploys once the UI work was done: push the
+merged-transcript/citations + bubble-styling commits (reaches Vercel
+automatically), and run `flyctl deploy` for the prompt-refinement change
+from earlier in the day (the one still sitting only in git, since the
+system prompt is baked into the Fly.io image and doesn't take effect from
+a push alone).
+
+- Pushed to `main`; confirmed via a direct `curl` of the live bundle that
+  Vercel's auto-deploy actually picked it up — new JS asset hash, and
+  `grep`'d the real fetched bundle for `"transcript-turn"` (the new CSS
+  class from today's merge) to confirm it's not just *a* new build but
+  specifically *this* change. Re-ran the same zero-secrets scan the
+  2026-08-23 security task established (every real secret's literal
+  value, checked against the actual live-fetched bundle, not a local
+  build) — clean, same as every prior check.
+- Ran `flyctl deploy --now` for the agent worker. Real build (~140s: `uv
+  sync` install, plugin file preloading, baking the `bge-small-en-v1.5`
+  embedding model into the image, per the 2026-08-21 cold-start fix this
+  Dockerfile already encodes), rolling machine update, `flyctl status`
+  confirming version incremented (10 → 11) and the machine reached
+  `started`. Pulled fresh logs directly rather than trusting the CLI's own
+  "good state" message alone: confirmed a clean `registered worker` with
+  `agent_name: ""` (automatic dispatch, FR-1.4, still intact) and zero
+  errors in the boot sequence.
+- **Found and fixed a real regression while trying to verify the deploy
+  end to end.** Went to reuse `tests/measure_latency.py`'s connection
+  logic for a quick real production check and hit
+  `Exception: parameter 'request' must be an instance of
+  starlette.requests.Request` — the `POST /token` rate-limiter work
+  earlier today (`5954335`) added a required `request` parameter to
+  `create_token()` via slowapi's `@limiter.limit` decorator, and this
+  script (committed *before* that change) was never updated to match.
+  Never caught until now because nothing had re-run it since. Fixed with a
+  minimal but complete ASGI `http` scope passed to a real
+  `starlette.requests.Request` — confirmed `get_remote_address()` only
+  ever reads `request.client`, so this correctly registers as one real
+  caller against the actual deployed rate limit, not a bypass of it.
+- **Verified both deploys together against real, live production
+  infrastructure** — not local simulation, not a mental trace from the
+  earlier same-day verification against `agent.retrieval.retrieve()`
+  directly. Used the fixed token-minting helper to open a real room
+  against the live Fly.io worker, sent the same two questions
+  (`tests/verify_prompt_changes.py` had already checked these once, but
+  that was direct-to-Gemini, bypassing the actual deployed pipeline
+  entirely) via `lk.chat`, and read the real captured Fly logs for what
+  the *deployed* worker actually said:
+  - "What is your favourite pizza topping?" → *"That is not something I
+    get into, I am really only set up to talk about my career and
+    background."*
+  - "You worked at Google, right?" → *"That is not correct, I have no
+    record of working there."*
+  Both match the new phrasing exactly, confirming the Fly.io deploy
+  reached production and isn't just sitting correctly in the Docker
+  image's build logs.
+
+**Why**
+
+Verifying against local simulation earlier today (Gemini calls with a
+loaded prompt string, or a local dev server) was the right call *then* —
+it answered "does this change work" cheaply and safely. But it doesn't
+answer "is this change actually live," which is a genuinely different
+question this project has drawn a hard line on all session (the ingestion
+cron's six-round saga is the clearest example: a fix that's correct in the
+diff is not the same claim as a fix that's confirmed running). Finding the
+`measure_latency.py` regression specifically *while* trying to do that
+final check is exactly the value of always reaching for the real thing
+instead of assuming yesterday's tooling still works — a script that
+silently bit-rotted after an unrelated change would have stayed broken
+indefinitely if nothing had tried to use it again.
+
+**Decisions made**
+
+- Both deploys are complete and verified, not just triggered — the
+  distinction this project has maintained since the ingestion cron
+  debugging thread (a deploy that appears to succeed and a deploy that's
+  actually confirmed working are different claims).
+- `tests/measure_latency.py`'s token-minting is now regression-proofed by
+  construction (a real `Request` object, not a mock that happens to work
+  today) — the same fix pattern is available inline for any future
+  one-off script that needs to call `create_token()` directly.
+
+**Verification**
+
+- `flyctl status -a voice-twin-worker` before and after: version 10 → 11,
+  confirming a real new machine, not a no-op.
+- Real `flyctl logs` output read directly for the post-deploy boot
+  sequence — `registered worker` with the correct empty `agent_name`,
+  zero errors — not inferred from `flyctl deploy`'s own "good state"
+  message alone.
+- Live-fetched the actual deployed Vercel bundle via `curl` (not a local
+  build) and confirmed both the new CSS class's presence and a clean
+  zero-secrets scan against it.
+- The regression in `tests/measure_latency.py` was caught by actually
+  running it, not by code review — reproduced the exact failure, fixed it,
+  then used the fixed version for real (not just confirmed it imports
+  cleanly).
+- The final production check is a real conversation against the real
+  deployed worker, with real Fly log lines quoted directly above, not
+  paraphrased or assumed to match the earlier local-simulation result.
+- Scanned `tests/measure_latency.py` for secret-shaped strings before
+  staging — none found.
+- `git status --short` after staging → exactly the one intended file.
+- Committed as `c110cf2`, work only, separate from this journal entry.
+- No further push/deploy needed for this entry itself — it's a journal
+  entry describing already-completed, already-verified deploys and one
+  already-committed regression fix.

@@ -158,11 +158,13 @@ Read the relevant doc **before** implementing:
 `agent/prompts/system_prompt.md`, and `agent/main.py` are all live and verified.
 **`system_prompt.md` was refined again on 2026-08-23** (differentiated
 `no_match` refusal phrasing, briefer false-premise corrections, answer length
-that flexes to the question) and verified against the real model via
-`tests/verify_prompt_changes.py` — but is **not yet deployed**: unlike the
-corpus, the prompt is baked into the Fly.io Docker image, so it needs an
-explicit `flyctl deploy` to reach production, still pending. See
-`docs/DEV_JOURNAL.md`'s 2026-08-23 entry.
+that flexes to the question) — verified first against the real model via
+`tests/verify_prompt_changes.py`, then **deployed live via `flyctl deploy`
+and reconfirmed against the real production worker**: a real `lk.chat`
+conversation against `voice-twin-worker`, read straight from Fly logs, shows
+the pizza question getting the new personal/off-topic phrasing and the
+Google question getting a short false-premise correction — both exactly as
+intended. See `docs/DEV_JOURNAL.md`'s 2026-08-23 entries.
 NFR-1.1/1.2's 20-turn latency measurement is now partially done (2026-08-22):
 `tests/measure_latency.py` + `tests/parse_latency_log.py` ran a real 20-turn
 suite against the live production worker (text input over `lk.chat`, same
@@ -196,8 +198,10 @@ text-align: center }` (an untouched Vite template default) was silently
 center-aligning the Twin's bubble text; both message types now have real
 bubble styling with explicit left-aligned content. Verified live via the
 dev server (a temporary, removed debug hook to drive a real grounded
-question through the browser's own room instance) — see
-`docs/DEV_JOURNAL.md`'s 2026-08-23 entry. **Not yet pushed or deployed.**
+question through the browser's own room instance), then **pushed and
+confirmed live on Vercel** — fetched the actual deployed bundle directly and
+grepped it for the new CSS class, plus a fresh zero-secrets scan (clean).
+See `docs/DEV_JOURNAL.md`'s 2026-08-23 entries.
 
 **Mobile layout audited and its one real gap fixed (2026-08-22).** Measured
 actual rendered geometry (`getBoundingClientRect`/`getComputedStyle`, not
