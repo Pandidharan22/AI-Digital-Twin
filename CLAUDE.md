@@ -178,15 +178,26 @@ Phase 4 has three of five prioritized items done: `AgentStatus.tsx` (FR-5.2,
 via `useVoiceAssistant()`), `MicPermissionNotice.tsx` (explainer + a
 `mediaDevicesError`-driven denied-state message), and `SuggestedQuestions.tsx`
 (FR-5.4, `CITATION_SPEC.md` §7's four demo questions, now the literal spec
-wording again — see the A1 fix below). `TranscriptPanel.tsx` (FR-5.1) is also
-done, using `@livekit/components-react`'s own `useTranscriptions()` hook —
-the same mechanism behind LiveKit's Agent Console transcript view, no
-agent-side changes needed. UI was redesigned once already after owner
-feedback on the first live deployment (2026-08-21): single-column blended
-layout (no boxed transcript, no half-screen citations panel), a custom
-`MicToggle.tsx` replacing `ControlBar`, and `CitationsPanel.tsx` now labels
-each source by document type (Resume / Notes (context.md) / `<repo>` —
-README.md) instead of showing the raw retrieved excerpt.
+wording again — see the A1 fix below). UI was redesigned once already after
+owner feedback on the first live deployment (2026-08-21): single-column
+blended layout (no boxed transcript, no half-screen citations panel), a
+custom `MicToggle.tsx` replacing `ControlBar`, and each source labeled by
+document type (Resume / Notes (context.md) / `<repo>` — README.md) instead
+of the raw retrieved excerpt. **Redesigned again (2026-08-23)** after the
+real mobile test: `TranscriptPanel.tsx` and `CitationsPanel.tsx` (FR-5.1,
+FR-4.1/4.2) — previously two separate components with no correlation
+between them, which is why citations used to pile up in one block
+disconnected from the message they backed — are retired, replaced by
+`ConversationLog.tsx`, which merges both into one per-turn feed using a
+verified-live (not assumed) shared wall-clock timestamp between LiveKit's
+own transcription stream and `agent/citations.py`'s payloads. Also fixed a
+real root cause, not just added polish: `index.css`'s inherited `#root {
+text-align: center }` (an untouched Vite template default) was silently
+center-aligning the Twin's bubble text; both message types now have real
+bubble styling with explicit left-aligned content. Verified live via the
+dev server (a temporary, removed debug hook to drive a real grounded
+question through the browser's own room instance) — see
+`docs/DEV_JOURNAL.md`'s 2026-08-23 entry. **Not yet pushed or deployed.**
 
 **Mobile layout audited and its one real gap fixed (2026-08-22).** Measured
 actual rendered geometry (`getBoundingClientRect`/`getComputedStyle`, not

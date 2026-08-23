@@ -5376,3 +5376,150 @@ adjacent to the single most safety-critical behavior in the whole project.
   in front of a real visitor — the Fly.io worker runs from a built Docker
   image, not a live-read file, so an explicit `flyctl deploy` is a
   separate, distinct action still needed and not taken automatically.
+
+---
+
+## 2026-08-23 — Merged transcript and citations into one per-turn feed, fixed bubble styling
+
+**What happened**
+
+Picked up the two remaining UI/UX findings from the mobile test: citations
+piling up separately from the message they backed, and the Twin's
+transcript text reading with no visible bubble / apparent center
+alignment.
+
+- **Root-caused the citations-grouping report before touching any code.**
+  Re-read `App.tsx`, `TranscriptPanel.tsx`, `CitationsPanel.tsx`: they were
+  two structurally separate components reading two unrelated data sources
+  — transcript from LiveKit's own `lk.transcription` topic via
+  `useTranscriptions()`, citations from `agent/citations.py`'s own
+  `"citations"` data-channel topic — rendered as flat sibling lists with no
+  correlation between them at all. Confirmed there's no shared id to join
+  on: transcript segments get their id from LiveKit's own STT/TTS-alignment
+  pipeline, citations get `turn_id` from `context.speech_handle.id`
+  (`agent/twin_agent.py`) — different id spaces entirely.
+- **Found a real, usable correlation instead of giving up on exact
+  matching: both timestamps are real wall-clock time, verified live, not
+  assumed.** Added a one-line temporary `console.log` to compare
+  `streamInfo.timestamp` against `Date.now()` at receipt — same magnitude,
+  same epoch (13-digit ms-since-1970 values ~49s apart, matching how long
+  had actually passed) — confirming `streamInfo.timestamp` is directly
+  comparable to `new Date(citation.timestamp).getTime()`. Removed the
+  debug line immediately after confirming, before writing any real logic
+  on top of an unverified assumption.
+- Built `ConversationLog.tsx`, replacing both `TranscriptPanel.tsx` and
+  `CitationsPanel.tsx` entirely (deleted, not left as dead code): merges
+  the two streams by having each *agent* transcript line claim the
+  earliest not-yet-claimed citation whose timestamp precedes it. Safe
+  specifically because ADR-005 guarantees a citation always publishes
+  before its reply starts generating, and this project is single-
+  participant-per-room — no concurrency to worry about scrambling the
+  ordering. An ungrounded reply (the greeting, or a question the model
+  recognizes as off-topic without even calling the tool — confirmed this
+  actually happens, from the previous entry's own pizza-question test)
+  correctly claims no citation, since none was ever published for it —
+  preserved as a deliberate behavior, not a gap: showing a fabricated "no
+  source" chip for a turn where the tool was never even called would
+  misrepresent what actually happened.
+- **Root-caused the bubble/alignment complaint too, rather than treating
+  it as "just add a background."** Checked `.transcript-line-agent`'s
+  actual computed styles before writing any CSS: `index.css`'s `#root {
+  text-align: center }` — an unmodified leftover from the original Vite
+  scaffold template, never touched since Phase 4's redesign — was
+  cascading down uncontested, since `.transcript-line-agent` never
+  explicitly set its own `text-align`. The visitor line only looked
+  correctly right-aligned because it explicitly overrode with `text-align:
+  right`; the agent line had nothing overriding the inherited center value.
+  This was a real, specific, findable bug, not a vague "needs polish"
+  request.
+- Added real bubble styling (background, border, radius, a smaller
+  "tail" corner) to both message types via `.transcript-turn`/
+  `.transcript-turn-visitor`/`.transcript-turn-agent` wrapper classes, plus
+  an explicit `text-align: left` on the bubble content itself — the actual
+  fix for the inherited-CSS bug, not just a visual add-on.
+
+**Verified live, not just read as correct code**
+
+- Since this app has no visible text-input path (voice-only by design),
+  reused the same `lk.chat` technique established for Suite C and this
+  session's own latency harnesses — but needed the *browser's own* room
+  instance this time, not an external script, to see it rendered in the
+  actual running page. Added a temporary `_DebugRoomExposer` component
+  (`useRoomContext()` → `window.__lkRoom`), used it once from the
+  browser's own JS console to send a real grounded question via
+  `room.localParticipant.sendText(...)`, then removed the component
+  entirely before committing — a real verification tool, not something
+  that should ship.
+- Real result: asked "Tell me about your most recent role." — the
+  citation ("Most Recent Role — Freelance Software Developer" plus related
+  chips) rendered directly under *that* reply, not the greeting above it
+  and not in a separate block — confirmed via `get_page_text`, not assumed
+  from the code reading correct.
+- Confirmed computed styles directly (`getComputedStyle`): `text-align:
+  left`, a real background color, and the intended asymmetric border-radius
+  ("tail" corner) — not just that the CSS file contains the right rules,
+  but that they actually apply to the rendered DOM.
+- Confirmed the visitor bubble's CSS rules exist and target the right
+  class by reading the compiled stylesheet directly (`document.
+  styleSheets`), since no real visitor line existed in this text-injected
+  session to check via computed style the same way the agent side was.
+- Checked for mobile overflow at 375px after the restructure — none,
+  bubbles sit within bounds (max width 293px in a 375px viewport).
+- **Caught and correctly diagnosed a false alarm before it wasted more
+  time**: after cleanup, `read_console_messages` on the original tab
+  showed several errors (`TranscriptPanel is not defined`, `429 Too Many
+  Requests`) — recognized these as stale HMR history accumulated *during*
+  the live-editing process (Vite trying to hot-reload files mid-delete,
+  and this session's own repeated local reconnects tripping its own
+  5/minute rate limiter) rather than a current bug, and confirmed that
+  diagnosis correctly by opening a genuinely fresh tab: zero console
+  errors, clean render. Didn't declare victory on the stale read, and
+  didn't chase a phantom bug on it either — checked directly instead of
+  assuming either way.
+- `npx tsc --noEmit` and `npm run build` both clean, before and after the
+  debug-code removal.
+
+**Why**
+
+Treating "citations pile up separately" as a UI-only styling problem would
+have missed that it's actually a data-correlation problem — no amount of
+CSS could fix two components that never talk to each other. Finding the
+shared wall-clock-timestamp property, and verifying it live rather than
+assuming both SDKs use the same epoch convention, is what turned "these
+two things happen to be related in spirit" into "these two things can be
+correlated with a specific, checkable rule." Root-causing the bubble
+complaint to a single inherited CSS property, instead of just layering a
+background color on top of whatever was already there, is the same
+discipline the A1/A5 retrieval fixes and the mobile touch-target fix
+already established for this project: find the actual mechanism before
+writing the fix, so the fix addresses the real cause rather than papering
+over a symptom.
+
+**Decisions made**
+
+- `TranscriptPanel.tsx` and `CitationsPanel.tsx` are permanently retired,
+  not kept around unused — `ConversationLog.tsx` is the one component that
+  owns both data sources now.
+- Citation-to-turn correlation is timestamp-based, not id-based, since no
+  shared id exists between the two systems — documented inline in
+  `ConversationLog.tsx`'s own comment so a future session doesn't
+  rediscover this from scratch.
+- An ungrounded reply showing zero citation chips (not a "no source" chip)
+  is a deliberate, preserved behavior, not an oversight to fix later.
+
+**Verification**
+
+- Every claim above is either a direct source read (confirming the actual
+  root cause before writing a fix) or a real, live browser check (console
+  output, computed styles, stylesheet rules, page text) — not inferred
+  from the code compiling or the change looking plausible.
+- Scanned `App.tsx`, `App.css`, and `ConversationLog.tsx` for secret-shaped
+  strings before staging — none found (a debug hook exposing a room
+  object, not a credential, and it was removed before this commit anyway).
+- `git status --short` after staging → exactly the five intended files
+  (two deletions, one addition, two modifications).
+- Committed as `2d2ab30`, work only, separate from this journal entry.
+- **Not yet deployed to Vercel** — verified against the local dev server
+  only. A push reaches GitHub; Vercel's own auto-deploy (already confirmed
+  working in earlier entries) would then pick it up, but that's a separate
+  step from local verification and hasn't happened yet as of this commit.
