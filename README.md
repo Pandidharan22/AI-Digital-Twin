@@ -40,6 +40,7 @@ one phase at a time and a verification checkpoint between each.
 | `SDK_NOTES.md` | Verified LiveKit Agents API surface — real import paths and signatures, read from the installed package | Before writing any pipeline code (Phase 1) |
 | `CLAUDE.md` | Project context file — **goes in project root** | Never edit mid-build without reason |
 | `DEV_JOURNAL.md` | Dated log of every verified step: what changed, why, and the concepts behind it | After every step, before moving to the next |
+| `POST_EVAL_BACKLOG.md` | Ideas deliberately deferred past this evaluation — not part of the active to-do list | Only after the evaluation build is done |
 
 ---
 

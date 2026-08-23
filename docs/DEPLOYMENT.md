@@ -165,10 +165,14 @@ architecture change" is a stronger answer than pretending the limit isn't there.
 - [ ] Tokens expire ≤ 15 min (FR-1.3)
 
 **Functionality**
-- [ ] Link works from a device that never saw the project
-- [ ] Mobile Safari works
-- [ ] Cellular network works
-- [ ] Cold start under 15s
+- [x] Link works from a device that never saw the project (2026-08-23,
+      Android/Chrome real device test)
+- [ ] Mobile Safari works — still open, 2026-08-23's test was Android, not iOS
+- [x] Cellular network works (2026-08-23, real device, Wi-Fi off) — see
+      `docs/TEST_PLAN.md` Sec4's U6 note for the one open item (occasional
+      TTS audio glitching, not yet diagnosed)
+- [x] Cold start under 15s (2026-08-23) — ~2-3s to welcome message on the
+      real-device cellular test, well under target
 - [ ] All four demo questions from `CITATION_SPEC.md` §7 behave correctly
 - [ ] Sources render before speech
 - [ ] Refusal shows the "no source" state

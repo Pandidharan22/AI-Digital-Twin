@@ -292,12 +292,25 @@ writeup is concrete evidence of engineering rigour.
 | U2 | Mic permission denied | Helpful message, not a dead screen |
 | U3 | Interrupt mid-response | Stops within 300ms |
 | U4 | Follow-up: "what about before that?" | Resolves against prior turn |
-| U5 | Mobile Safari full conversation | Works |
-| U6 | Cellular network | Works |
+| U5 | Mobile Safari full conversation | **Still open** — 2026-08-23's real device test was Android/Chrome, not iOS/Safari |
+| U6 | Cellular network | **PASS (2026-08-23, real device)** — see note below |
 | U7 | Refresh mid-conversation | Recovers cleanly |
 | U8 | Sources visible before speech | Yes |
 | U9 | Refusal clears prior source cards | Yes (FR-4.6) |
 | U10 | Speech contains no markdown artifacts | Yes |
+
+**U6 real-device note (2026-08-23, Android/Chrome, cellular data, Wi-Fi off):**
+mic permission worked normally, citations rendered, conversation held up over
+the full session — a real pass, not a desktop-only assumption. Connected
+faster than expected: ~2–3s from page load to hearing the welcome message,
+well under U1's 15s target. **One real, not-yet-diagnosed issue**: TTS audio
+occasionally broke up / played back faster than normal mid-reply. Not yet
+known whether this is a real bug (buffering, chunking, or pacing on the
+send side) or an inherent characteristic of variable cellular bandwidth that
+LiveKit's own jitter buffering is already doing its best against — needs
+more detail (frequency, whether it reproduces on Wi-Fi) before deciding
+whether it's actionable. iOS Safari (the literal U5 test) is still
+unverified — this was Android only.
 
 ---
 

@@ -105,6 +105,9 @@ Read the relevant doc **before** implementing:
 - `docs/BUILD_PLAN.md` — phase order and exit criteria
 - `docs/TEST_PLAN.md` — acceptance tests
 - `docs/SDK_NOTES.md` — verified LiveKit API surface
+- `docs/POST_EVAL_BACKLOG.md` — ideas deliberately deferred past this
+  evaluation (real-interview corpus depth, whole-repo ingestion, prompt
+  flexibility) — not part of the active to-do list
 - `docs/DEV_JOURNAL.md` — append an entry after every verified, committed step (see
   Working style below); read it to catch up on prior reasoning fast
 
