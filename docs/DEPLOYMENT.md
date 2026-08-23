@@ -122,6 +122,37 @@ evaluating badly.
 link on a phone, on cellular, in a browser that has never seen the site. Time it. If it
 exceeds 15 seconds, fix it before submitting.
 
+**Re-verified (2026-08-23) — the GitHub Actions keep-warm cron is less
+reliable than assumed, quantified for real.** `.github/workflows/
+keep-warm.yml` is configured `*/10 * * * *`, but its actual last 14 runs
+landed 15.4–47.4 minutes apart (median **25.8 min**, mean 26.3 min) —
+**every single one** exceeded Render's own ~15-minute sleep threshold, not
+just the "two runs" the 2026-08-22 entry flagged as an occasional anomaly.
+GitHub Actions' `schedule` trigger is evidently deprioritizing this
+low-activity repo's scheduled runs by a wide, consistent margin, not an
+edge case.
+
+Every individual ping still **succeeds** (100% success rate — the
+100s-timeout-plus-retry fix from 2026-08-22 is doing its job), so the cron
+itself isn't broken. But its actual *purpose* — keeping the gap under
+Render's sleep threshold so a real visitor never lands on a cold instance —
+is not being met: for roughly (gap − 15) minutes of every real gap, Render
+has already gone to sleep and is just waiting for whichever comes first,
+the next scheduled ping or an actual visitor. A visitor arriving in that
+window pays the full 60–90s cold-start cost the keep-warm cron was
+specifically built to prevent.
+
+**Recommendation, not yet implemented:** this section's original Option 2
+— an external uptime pinger (cron-job.org, UptimeRobot) — fires on its own
+infrastructure's clock, not GitHub Actions' shared scheduler, and should
+hit its configured interval far more reliably. Worth adding as a second,
+more precise layer (or a replacement) rather than relying on GitHub Actions
+alone for something this timing-sensitive; GitHub Actions remains perfectly
+fine for the ingestion cron, where daily-ish timing doesn't matter. Setting
+one up needs a new account on the owner's side — flagged as a concrete next
+step, not done in this pass. See `docs/DEV_JOURNAL.md`'s 2026-08-23 entry
+for the full data.
+
 ---
 
 ## 5. Free-tier limits and where they bite
@@ -185,7 +216,11 @@ architecture change" is a stronger answer than pretending the limit isn't there.
       whitespace, a missing threshold config, a known gap that would have
       failed every run forever) — see `docs/DEV_JOURNAL.md`'s 2026-08-23
       entries for the full account.
-- [ ] Idle 30 min then immediately usable
+- [ ] Idle 30 min then immediately usable — **re-verified 2026-08-23, not
+      passing as designed**: the keep-warm cron's real gaps (median 25.8min,
+      14/14 samples over Render's ~15min sleep threshold) mean a visitor can
+      still land on a cold instance. See Sec4's 2026-08-23 note for the data
+      and the recommended fix (an external uptime pinger).
 - [ ] Mic-denied path shows a helpful message
 - [ ] Rate limit produces a spoken fallback, not silence
 
