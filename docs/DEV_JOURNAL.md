@@ -4923,3 +4923,47 @@ step at all, since a validation gate nobody trusts is no gate.
   (confirm the run's actual commit via the API, don't assume a pushed fix
   "worked" from the owner's report alone) applies here too, not relaxed
   just because this feels close to done.
+
+**Final addendum, same day: confirmed working end-to-end.** Pushed
+(`6bad461`), owner triggered via "Run workflow" specifically (not the
+"Re-run" button rounds 3-4 had been mistakenly using, which replays the
+original commit). Checked the run before reading anything into the
+result, same as every round in this thread: `GET
+/repos/.../actions/workflows/ingest.yml/runs` showed `run_number: 6`,
+`run_attempt: 1`, `head_sha` matching `6bad461` exactly, `conclusion:
+success`. Went one level deeper than the top-level conclusion this time —
+fetched `GET /repos/.../actions/runs/{id}/jobs` and confirmed every
+individual step green, specifically both `Run ingestion` and `Validate
+corpus` (the two steps that had actually failed across the previous five
+rounds), not just an aggregate pass. Tried to pull the raw log text too,
+for the same "verify the actual output, not just the checkmark" standard
+the rest of this project holds — blocked with `403 Must have admin rights
+to Repository`, a real API permission limit for this session's read-only
+access, not a workaround-able gap. Treated the step-level API result
+(GitHub's own authoritative record) combined with this session's own
+local reproduction of the identical `RETRIEVAL_THRESHOLD=0.55
+RETRIEVAL_TOP_K=5 uv run python -m ingestion.validate` run (real output
+captured earlier in this entry: `Retrieval validation: PASS`, exit `0`)
+as sufficient confirmation without the raw CI log text, rather than
+either overclaiming from a partial check or blocking on access this
+session doesn't have.
+
+Marked `docs/DEPLOYMENT.md`'s "Ingestion cron ran successfully at least
+once" exit criterion done, and condensed `CLAUDE.md`'s status section
+(the full six-round account stays here, in this journal, as the durable
+record — `CLAUDE.md` exists for fast orientation, not a blow-by-blow).
+Committed as `5e3c9b5`, its own work commit, separate from this journal
+entry, per protocol.
+
+**What this six-round thread is actually worth remembering:** every
+single failure in it was a real, live, previously-undiscoverable problem
+— none of it was guessable from reading the code in isolation, and local
+testing structurally could not have caught any of it, since `.env` +
+`python-dotenv` behave differently from GitHub Actions secrets in exactly
+the ways that broke each round. The discipline that actually closed this
+out wasn't any one fix; it was reading each new error as a *possibly
+different* problem instead of assuming round *N*'s diagnosis explained
+round *N+1*'s symptom, and independently confirming which commit a run
+actually executed against before drawing any conclusion from it — twice
+that specific check caught a stale-run illusion that would otherwise have
+looked like "the fix didn't work."
