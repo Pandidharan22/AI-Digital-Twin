@@ -218,6 +218,57 @@ this isn't Phase 1's old "one slow request" story; it's a consistent 2x-over-
 target floor worth investigating as its own follow-up (prompt length, tool-
 call round-trip, or the model itself).
 
+**Optimization pass (2026-08-23): the 1066ms figure above is only half the
+real story, and neither obvious lever moved it.** Every grounded turn makes
+*two* sequential Gemini calls — decide to call `search_my_background`, then
+generate the final answer once the tool result is back — but
+`livekit-agents`' own event model only attaches `.metrics` (and so only
+`llm_ttft`) to the second call; `FunctionCall` items carry no metrics field
+at all (confirmed by reading `chat_context.py` directly). The first call's
+own latency has been completely invisible in every measurement so far.
+
+Built `tests/bench_llm.py` to call the same `google-genai` SDK
+`livekit-plugins-google` wraps directly — real system prompt, real tool
+schema, real model — to see call 1 on its own and A/B two candidate levers.
+Real results (6 trials/variant, paced):
+
+| Variant | median | p95 |
+|---|---|---|
+| Call 1 (tool-decision), real prompt | **1010ms** | 1098ms |
+| Call 2 (final answer), real prompt | 768ms | 879ms |
+| Call 2, `thinking_level=minimal` set explicitly | 746ms | 962ms |
+| Call 2, prompt shortened ~450 words → ~15 words | 799ms | 925ms |
+
+**The real total LLM latency per grounded turn is closer to ~1.7–1.9s
+(both calls), not the ~1.07s the pipeline metric alone showed** — call 1
+was never smaller than call 2, if anything slightly larger. **Neither
+lever helped:** Google's own docs (fetched live) already said
+`gemini-3.5-flash-lite` defaults to `thinking_level="minimal"`; setting it
+explicitly confirmed that empirically too — 746ms vs. 768ms is noise, not
+a win. Cutting the system prompt to a fraction of its length made no
+difference either (799ms vs. 768ms, again noise) — prompt-processing cost
+isn't the bottleneck at this scale. Both were real, worth-checking
+hypotheses that turned out to be dead ends, not confirmed wins — recorded
+here so a future session doesn't re-spend time re-testing them.
+
+**What's left, in decreasing order of how low-risk/zero-cost it is:**
+1. **Accept ~700–1100ms/call as close to this model tier's practical
+   floor** and document NFR-1.4 against the real two-call total rather
+   than a single-call assumption the spec was originally written around.
+2. **A paid Gemini "priority" service tier exists** (`ServiceTier.PRIORITY`
+   in the SDK) that may reduce latency, but its free-tier availability and
+   actual latency effect aren't documented anywhere fetched so far — not
+   tested, since it risks real cost and `CLAUDE.md`'s "everything free
+   tier, don't introduce paid dependencies without asking" applies
+   directly. Owner decision, not made unilaterally.
+3. **An architectural change** — skip the tool-decision call for
+   unambiguous factual questions (a cheaper heuristic pre-classifier) or
+   restructure away from two-call agentic tool-use entirely — would cut
+   real latency but is a materially bigger, riskier change to the
+   well-tested grounding/refusal behavior (Suite C, ADR-004) than
+   anything tried so far. Not started; needs its own plan, not a quick
+   follow-up.
+
 **If total exceeds target, find the dominant stage before optimising.** Common culprits:
 
 | Dominant stage | Likely cause | Fix |
