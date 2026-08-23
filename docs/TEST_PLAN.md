@@ -237,7 +237,21 @@ Fix the top three.
 
 ## 6. Security
 
-- [ ] Frontend bundle contains no API keys (search the built JS)
+- [x] Frontend bundle contains no API keys (2026-08-23). Structural reason
+      it can't happen by accident: `web/vite.config.ts` has no `envDir`
+      override, so Vite only ever reads env files from `web/` itself, never
+      the repo-root `.env` that holds the real secrets — confirmed by
+      reading the config, not assumed. On top of that, empirically scanned
+      both a local production build and the **live deployed bundle**
+      (fetched directly from `ai-digital-twin-blue.vercel.app`) for the
+      literal value of every real secret in `.env`
+      (`LIVEKIT_API_KEY/SECRET`, `DEEPGRAM_API_KEY`, `GEMINI_API_KEY`,
+      `SUPABASE_SERVICE_KEY`, `DATABASE_URL`, `GITHUB_TOKEN`) plus generic
+      secret-shape patterns (`AIza...`, `github_pat_...`, `sk-...`,
+      `postgresql://...`, PEM headers) — all clean, both locally and in
+      production. The only `VITE_`-prefixed value that ships is
+      `VITE_TOKEN_SERVICE_URL`, which is meant to be public (the frontend
+      already calls it directly from the browser).
 - [ ] `git log -p` shows no committed secrets
 - [ ] Token endpoint rejects malformed requests
 - [ ] Tokens expire ≤ 15 min
