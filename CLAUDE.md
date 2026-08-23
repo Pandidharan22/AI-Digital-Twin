@@ -328,10 +328,23 @@ than failing. Final run: both `Run ingestion` and `Validate corpus` green,
 verified via the Actions API against the exact latest commit. Full
 round-by-round account in `docs/DEV_JOURNAL.md`'s 2026-08-23 entries.
 
-Still open before Phase 5's exit criteria are fully met: the
-30-minute-idle-then-cold-open test (now easier to re-verify with the keep-warm
-cron in place — worth confirming it actually prevents the sleep, not just
-assuming), and mobile Safari/cellular verification.
+**Re-verified the 30-min-idle cold-open test (2026-08-23) — real finding, not
+a clean pass.** Pulled the keep-warm cron's actual last 14 run gaps via the
+GitHub Actions API rather than trusting the `*/10 * * * *` config: **14/14
+gaps exceeded Render's ~15min sleep threshold** (median 25.8min, mean
+26.3min, up to 47.4min) — GitHub Actions is evidently deprioritizing this
+low-activity repo's scheduled runs by a wide, consistent margin, not the
+occasional anomaly the 2026-08-22 entry described. Every individual ping
+still succeeds (the retry/timeout fix works), but the cron's actual
+purpose — keeping the gap under the sleep threshold — isn't met, so a real
+visitor can still land on a cold instance. Recommended fix (not yet
+implemented, needs a new third-party account): an external uptime pinger
+(cron-job.org, UptimeRobot), `docs/DEPLOYMENT.md`'s own original Option 2.
+See `docs/DEPLOYMENT.md` Sec4 and `docs/DEV_JOURNAL.md`'s 2026-08-23 entry.
+
+Still open before Phase 5's exit criteria are fully met: the item above, and
+mobile Safari/cellular verification (iOS specifically — Android/cellular was
+confirmed live on 2026-08-23).
 
 **Blocked by:** Nothing functionally. Open items: (1) the Phase 1 barge-in
 timing (~455ms) number is still unrevisited since Phase 1 — see (2a) below for

@@ -5636,3 +5636,102 @@ indefinitely if nothing had tried to use it again.
 - No further push/deploy needed for this entry itself — it's a journal
   entry describing already-completed, already-verified deploys and one
   already-committed regression fix.
+
+---
+
+## 2026-08-23 — Re-verified the 30-min-idle cold-open test: a real, quantified gap, not a clean pass
+
+**What happened**
+
+Last item for today: re-check whether the keep-warm cron built on
+2026-08-22 actually does what it's for, rather than assuming a green
+workflow run history means the job is accomplished. Pulled the real data
+instead of re-running a single manual test.
+
+- Fetched the keep-warm workflow's real recent run history via the
+  GitHub Actions API (`/repos/.../actions/workflows/keep-warm.yml/runs`)
+  and computed the actual gap between each consecutive run's
+  `created_at`, rather than trusting the `*/10 * * * *` schedule config
+  to describe what's actually happening.
+- **Real result: 14/14 of the most recent gaps exceeded Render's own
+  ~15-minute sleep threshold.** Gaps ranged 15.4–47.4 minutes, median
+  25.8, mean 26.3 — roughly 2.5x the configured 10-minute interval, and
+  never once landing under the threshold that actually matters. The
+  2026-08-22 entry had flagged "two runs" with a 25–31 min gap as a
+  notable but occasional anomaly; this sample shows that's actually the
+  *norm* for this workflow, not an edge case — a materially different,
+  more serious finding than what was previously on record.
+- Checked the current live response time directly
+  (`curl --max-time 100 .../health`) to make sure this wasn't purely
+  theoretical: **0.32s**, clearly warm right now, despite the last
+  recorded keep-warm ping being ~47 minutes earlier — most likely
+  explained by this same session's own earlier real traffic against the
+  live Render URL (the rate-limiter verification task, and the owner's
+  mobile/cellular test) rather than the cron itself, though the exact
+  cause of *this instant's* warmth doesn't change the pattern found across
+  14 real samples.
+- **Distinguished two separate claims rather than conflating them**: every
+  individual keep-warm ping still *succeeds* (100% success rate — the
+  100s-timeout-plus-retry fix from 2026-08-22 is doing exactly its job),
+  but the cron's actual *purpose* — keeping the gap under the sleep
+  threshold so a real visitor never lands on a cold instance — is not
+  being achieved. A ping that "succeeds" after waking a sleeping instance
+  is not the same outcome as a ping that *prevented* the instance from
+  sleeping in the first place, and the difference matters directly to a
+  real visitor's experience: for roughly `(gap − 15)` minutes of most real
+  gaps, Render has already gone to sleep and is waiting for whichever
+  comes first, the next scheduled ping or an actual visitor — who would
+  then pay the full 60–90s cold-start cost this cron exists to prevent.
+- Documented the finding in `docs/DEPLOYMENT.md` directly (Sec4's
+  mitigation list and the pre-submission checklist item), left the
+  checklist item explicitly unchecked rather than checked-with-caveats,
+  and recommended the concrete next step: `DEPLOYMENT.md` already listed
+  an external uptime pinger (cron-job.org, UptimeRobot) as Option 2 back
+  when this section was first written — that option fires on its own
+  infrastructure's clock rather than sharing GitHub Actions' scheduler
+  with every other low-activity repo, and should hit its configured
+  interval far more reliably. Not implemented in this pass, since it needs
+  a new third-party account on the owner's side.
+
+**Why**
+
+The whole point of re-verifying this item, per its own wording on the
+to-do list ("worth confirming it actually prevents the sleep, not just
+assuming"), was that a green run-history checkmark and an actually-met
+goal are two different claims — exactly the same distinction this
+session already drew for the ingestion cron (a workflow that runs without
+error is not the same as a workflow that accomplishes what it exists for).
+Pulling 14 real data points instead of eyeballing a couple of runs is what
+turned "GitHub Actions scheduling can sometimes be imprecise" (already
+known, already documented as a minor caveat) into "this specific cron
+misses its own target 100% of the time by a wide margin" — a genuinely
+different, more actionable finding that changes what the recommended fix
+should be.
+
+**Decisions made**
+
+- The keep-warm item stays open, not closed with caveats — the real data
+  doesn't support calling this "done."
+- An external uptime pinger is the recommended next step, not GitHub
+  Actions retuned to a shorter interval — GitHub's own scheduling
+  imprecision is the root cause here, not the specific cron value chosen,
+  so a tighter `cron:` string wouldn't fix it.
+- Left the ingestion cron's own GitHub Actions scheduling untouched and
+  unquestioned by this finding — that workflow's timing tolerance (daily,
+  not minute-precise) makes it a genuinely different case, not
+  contradicted by today's result.
+
+**Verification**
+
+- Every gap figure above comes from real `created_at` timestamps pulled
+  directly from the GitHub Actions API, computed in Python, not eyeballed
+  from the Actions UI or estimated.
+- The current-warmth check was a real `curl` against the live production
+  Render URL, not assumed from the cron's own success record.
+- Scanned `docs/DEPLOYMENT.md`'s diff for secret-shaped strings before
+  staging — none found.
+- `git status --short` after staging → only `docs/DEPLOYMENT.md`.
+- Committed as `ae01121`, work only, separate from this journal entry.
+- No push needed to make this finding "real" — it's a docs-only entry
+  reporting on infrastructure state already live; nothing in `agent/`,
+  `api/`, or `web/` changed.
