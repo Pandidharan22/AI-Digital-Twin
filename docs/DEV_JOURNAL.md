@@ -5155,3 +5155,100 @@ able to point to directly in the docs rather than reconstruct from memory.
 - Committed as `8bdba95`, work only, separate from this journal entry.
 - No push needed — docs only, `agent/`/`api/`/`web/` untouched, nothing
   about the deployed system changes either way.
+
+---
+
+## 2026-08-23 — Real mobile/cellular test result, and a post-eval backlog
+
+**What happened**
+
+Owner ran the mobile Safari/cellular test item 5 needed a real device for
+(this session has neither an iOS/Android device nor a cellular connection),
+per the checklist handed over earlier: Wi-Fi off, real cellular data,
+`ai-digital-twin-blue.vercel.app` in the browser, a full conversation.
+
+- **Real result, Android/Chrome, cellular data:** mic permission worked
+  normally, citations rendered, the conversation held up for the whole
+  session — a genuine pass, not a desktop-only assumption carried over.
+  Connected faster than expected: ~2–3s from page load to hearing the
+  welcome message, well under U1's 15s target.
+- **One real, not-yet-diagnosed issue:** TTS audio occasionally broke up
+  or played back faster than normal mid-reply. Recorded honestly as
+  *unknown cause* rather than guessed at — could be a real bug in how
+  audio is chunked/paced on the send side, or could be ordinary jitter
+  under variable cellular bandwidth that LiveKit's own jitter buffering is
+  already absorbing as well as it can. Not enough information yet
+  (frequency, whether it reproduces on Wi-Fi) to tell those apart, so
+  logged as open rather than assumed either way.
+- **Important scope note, not glossed over:** this test was Android/Chrome,
+  not iOS/Safari. `TEST_PLAN.md`'s U5 and `DEPLOYMENT.md`'s "Mobile Safari
+  works" checklist item are specifically about Safari — a real pass on a
+  different browser/OS doesn't satisfy them, so both stayed explicitly
+  open rather than getting checked off on the strength of a adjacent-but-
+  different test. `DEPLOYMENT.md`'s "cellular network works" and "cold
+  start under 15s" items, which don't name a specific browser, were marked
+  done against this real result.
+- Owner also raised three near-term UI/UX findings from the same session
+  (citations not grouped under their originating message, transcript
+  lines with no visible bubble styling, and suggested questions that
+  include ones the twin is designed to refuse) — not acted on in this
+  entry; flagged back for clarification before implementing, since at
+  least one of them (the suggested-questions point) runs directly against
+  `CITATION_SPEC.md` §7's explicit design intent (two of the four demo
+  questions are deliberately unanswerable, to showcase the refusal/
+  correction behavior that's the actual point of the project) rather than
+  being an unambiguous bug.
+- Owner separately raised three ideas explicitly framed as "beyond this
+  evaluation" and asked for them to be noted, not built: deepening the
+  corpus for real interview use (a literal "rate your skills 1-10"
+  question correctly refused per spec, but is exactly the kind of thing a
+  real interviewer might ask), ingesting whole GitHub repos rather than
+  just READMEs for deeper technical answers, and loosening the prompt
+  contract's strictness for synthesis-heavy technical questions. Created
+  `docs/POST_EVAL_BACKLOG.md` specifically so these have a durable home
+  that isn't the active to-do list — each entry documents the real trade-
+  off involved (e.g. loosening the grounding contract is a direct trade
+  against ADR-004's anti-hallucination guarantee, not a free tuning knob),
+  not just the raw idea.
+
+**Why**
+
+Distinguishing "tested on a different browser than the actual checklist
+item names" from "the checklist item is satisfied" matters because the
+whole reason `TEST_PLAN.md` names Safari specifically is that iOS Safari
+has real, historically different behavior around autoplay and media
+permissions than Chrome/Android — a pass on one says nothing reliable
+about the other. Creating a separate backlog doc for the "beyond
+evaluation" ideas, rather than folding them into `CLAUDE.md`'s active
+to-do list, keeps that list an accurate picture of what's actually being
+worked toward right now, which is exactly what `CLAUDE.md`'s own stated
+purpose ("a new session gets oriented fast") depends on staying true.
+
+**Decisions made**
+
+- U5/"Mobile Safari works" stay open until a real iOS test happens — not
+  inferred from the Android result.
+- The audio-glitch finding is logged as an open, undiagnosed issue, not
+  either dismissed as "just cellular" or claimed as a confirmed bug —
+  neither conclusion was actually earned by the information available yet.
+- The three UI/UX findings are queued for clarification (specifically the
+  suggested-questions one, which has a real design-intent conflict) before
+  any code changes, rather than implemented from a first read of the
+  feedback.
+
+**Verification**
+
+- Re-read `CITATION_SPEC.md` §7 directly before flagging the suggested-
+  questions point as a design-intent conflict rather than a plain bug —
+  confirmed the two "unanswerable" demo questions are there on purpose
+  ("this sequence sells the whole project"), not an oversight.
+- Re-read `App.tsx`/`TranscriptPanel.tsx`/`CitationsPanel.tsx` directly to
+  confirm the citations-grouping report's likely root cause (transcript and
+  citations are two structurally separate components/data sources today,
+  not correlated by `turn_id` in rendering) before promising a fix size or
+  approach — flagged as needing real investigation, not assumed to be a
+  quick CSS change.
+- Scanned every changed/new file for secret-shaped strings before staging
+  — none found.
+- `git status --short` after staging → exactly the five intended files.
+- Committed as `2b98220`, work only, separate from this journal entry.
