@@ -4696,3 +4696,105 @@ only ever calls `.strip()` on values already sourced from `os.environ`,
 never touches a literal secret). Committed as `cf75316`, work only. Push
 needed to reach the workflow that's already live and failing on the old
 code — flagged to the owner, not pushed automatically.
+
+---
+
+## 2026-08-23 — Ingestion cron, round 3: whitespace can be embedded, not just trailing
+
+**What happened**
+
+Owner pushed the `.strip()` fix and re-triggered — but the run that came
+back showed the *exact same* traceback as before. Checked the real state
+before assuming the fix didn't work: queried GitHub's own Actions API
+directly (`/repos/.../actions/workflows/ingest.yml/runs`) rather than
+trusting that "just triggered it" meant a fresh run had actually completed
+— and confirmed the run in question's `head_sha` was `b80d45c`, the commit
+*before* the `.strip()` fix (`cf75316`). The owner had re-shown the
+original failed run, not a new one. Asked them to trigger it again, for
+real, and this time confirmed via the same API check that the new run
+(`32627126679`) genuinely ran against `4aea520` (the fix's commit) before
+looking at its result — a real, necessary check, not procedural caution,
+given the previous mix-up.
+
+- **With the real fix actually running: DATABASE_URL was confirmed fixed** —
+  `setup_db()` succeeded this time, execution moved past it into
+  `_load_all()` → `github_loader.load()`.
+- **A second, different failure surfaced there:**
+  `httpx.LocalProtocolError: Illegal header value b'***'`, from building
+  the `Authorization: Bearer <token>` header out of `GITHUB_TOKEN`.
+  GitHub's own log redaction masks the value as `***`, but the exception
+  class itself was the real signal: h11 (httpx's underlying HTTP/1.1
+  implementation) rejects a header value outright if it contains a
+  control character like `\r`/`\n` anywhere — not just at the edges.
+  That's the piece `.strip()` structurally cannot fix, since `.strip()`
+  only ever removes characters from the *start and end* of a string. The
+  `GITHUB_TOKEN` secret must have had whitespace embedded *in the middle*
+  of the value — plausible for a long PAT that visually wrapped across
+  multiple lines wherever it was copied from before being pasted into
+  GitHub's secret box, carrying an embedded line break along with it.
+- Rather than patch this one call site again, generalized the fix: added
+  `ingestion/env.py`'s `env_secret(name)` — `"".join(os.environ[name].split())`,
+  which removes whitespace from *anywhere* in the string, not just the
+  ends. Safe unconditionally here because none of the six values this
+  reads (`DATABASE_URL`, `SUPABASE_URL`, `SUPABASE_SERVICE_KEY`,
+  `GITHUB_USERNAME`, `GITHUB_TOKEN`) can ever legitimately contain
+  whitespace at all — there's no real value this could corrupt.
+  Replaced every `.strip()` call site from the previous fix with this one
+  shared helper, so the next secret that turns out to have the same
+  problem doesn't need its own bespoke patch and its own explanatory
+  comment repeated a fourth time.
+
+**Why**
+
+The GitHub-API-status check before trusting "I triggered it" mattered
+because acting on a stale result would have meant either declaring victory
+falsely or, worse, concluding the `.strip()` fix didn't work at all and
+chasing a phantom bug — both wrong conclusions built on not verifying
+which commit actually ran. Once that was settled and a second, genuinely
+new failure appeared, generalizing rather than patching narrowly mattered
+because this is now the *second* secret out of four to show whitespace
+corruption from the same round of pasting — treating each as a one-off
+surprise would mean a third and fourth bug report before the actual
+pattern (this owner's paste source adds line breaks) gets addressed
+properly instead of reactively.
+
+**Decisions made**
+
+- `env_secret()` is now the only way ingestion code reads a secret from
+  the environment — direct `os.environ["X"]` reads for `DATABASE_URL`,
+  `SUPABASE_URL`, `SUPABASE_SERVICE_KEY`, `GITHUB_USERNAME`, or
+  `GITHUB_TOKEN` are gone from `ingest.py`, `validate.py`, and
+  `github_loader.py`.
+- Left `RETRIEVAL_THRESHOLD`/`RETRIEVAL_TOP_K` (also read via
+  `os.environ.get(...)` in `validate.py`) untouched — those are numeric
+  config, not secrets, parsed with `float()`/`int()`, which already fails
+  loudly and obviously on stray whitespace rather than silently
+  misbehaving the way a URL or header value can.
+- Did not attempt to diagnose or fix wherever the owner's actual copy
+  source introduces the line breaks (a text editor, a notes app, a
+  terminal's line-wrapping) — out of this session's reach, and the code-side
+  fix closes the failure mode regardless of the cause.
+
+**Verification**
+
+- Confirmed via GitHub's real Actions API, not assumption, both that the
+  first "just triggered it" report was a stale run and that the
+  follow-up run genuinely executed against the fix's commit before
+  drawing any conclusion from its result.
+- `uv run python -m py_compile` on all four changed files before running
+  anything.
+- Real `uv run python -m ingestion.validate` run against the live corpus
+  (read-only, safe to run directly) — connected and queried successfully,
+  confirming `env_secret()` is a true no-op against this session's own
+  clean local `.env` values.
+- `uv run pytest -m "not integration"` — 3 passed, unaffected.
+- Scanned `ingestion/env.py` and the three edited files for secret-shaped
+  strings before staging — none found.
+- `git status --short` after staging → exactly the four intended files.
+- Committed as `5a596b9`, work only, separate from this journal entry.
+- **Still not yet confirmed working end-to-end** — this fixes the second
+  known failure, but whether a third whitespace-corrupted secret (or an
+  entirely different issue) is waiting past `github_loader.load()` won't
+  be known until this is pushed and re-run for real. Flagged as open, not
+  assumed closed just because this round's specific error is now
+  addressed.

@@ -283,18 +283,23 @@ daily schedule + `workflow_dispatch`, runs `ingestion.ingest` then
 never checked out in CI; confirmed safe by design (not assumed) via a
 read-only `_load_all()` dry run showing only the six GitHub-sourced repos
 get produced when those files are absent, so their existing Supabase rows
-are never touched. Pushed, secrets added, and manually triggered (2026-08-23) — the first
-real run failed at `setup_db()` with a real, root-caused bug: the
-`DATABASE_URL` secret had a trailing newline baked in (a common GitHub
-secrets copy-paste artifact that `.env`/`python-dotenv` never exposes
-locally, since dotenv already trims values). Fixed with `.strip()` at all
-six places ingestion code reads a secret directly from the environment
-(`DATABASE_URL`, `SUPABASE_URL`, `SUPABASE_SERVICE_KEY`, `GITHUB_USERNAME`,
-`GITHUB_TOKEN`), not just the one that failed first — the other three were
-pasted the same way and equally exposed. Verified locally (a no-op against
-clean `.env` values) via a real `ingestion.validate` run. **Not yet
-re-pushed / re-triggered to confirm the actual fix works live** — that's
-the next concrete step. See `docs/DEV_JOURNAL.md`'s 2026-08-23 entry.
+are never touched. Pushed, secrets added, and manually triggered (2026-08-23) — two rounds of
+real, root-caused CI-only failures so far, both from the same underlying
+cause: GitHub Actions secrets pasted with stray whitespace, invisible in
+local dev since `python-dotenv` already trims `.env` values but reaching
+`os.environ` byte-for-byte in Actions. Round 1: `DATABASE_URL` had a
+trailing newline, breaking `psycopg`'s connection (fixed with `.strip()`,
+confirmed via GitHub's Actions API that the retry genuinely ran the fixed
+commit before trusting the result). Round 2: `GITHUB_TOKEN` had whitespace
+*embedded mid-token* — `.strip()` can't catch that, since it only trims
+the ends — causing `httpx`/h11 to reject the `Authorization` header
+outright. Generalized rather than patched again: `ingestion/env.py`'s
+`env_secret()` now strips whitespace from anywhere in the string, used for
+all six secret reads across `ingest.py`/`validate.py`/`github_loader.py`.
+Verified locally (no-op against clean `.env` values) via a real
+`ingestion.validate` run and the pytest suite. **Not yet pushed, and still
+not confirmed working end-to-end** — a third distinct failure past this
+point hasn't been ruled out. See `docs/DEV_JOURNAL.md`'s 2026-08-23 entries.
 
 Still open before Phase 5's exit criteria are fully met: the
 30-minute-idle-then-cold-open test (now easier to re-verify with the keep-warm
