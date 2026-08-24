@@ -5735,3 +5735,93 @@ should be.
 - No push needed to make this finding "real" — it's a docs-only entry
   reporting on infrastructure state already live; nothing in `agent/`,
   `api/`, or `web/` changed.
+
+---
+
+## 2026-08-24 — Phase 5: External uptime pinger closes the keep-warm gap
+
+**What happened**
+
+- Set up an external uptime pinger to fix the finding from 2026-08-23:
+  GitHub Actions' `keep-warm.yml` cron was succeeding on every run but
+  missing its own 10-minute target by such a wide margin (14/14 gaps over
+  Render's ~15min sleep threshold) that it wasn't accomplishing its actual
+  job. `docs/DEPLOYMENT.md` had already named the fix — an external uptime
+  pinger firing on its own infrastructure's clock instead of sharing
+  GitHub Actions' scheduler — but it needed a new third-party account,
+  which is outside what an agent session can do (account creation is a
+  hard no regardless of who's asking or how routine it seems).
+- Owner created a free cron-job.org account and configured a job hitting
+  `https://voice-twin-api-46lk.onrender.com/health` every 5 minutes — a
+  tighter interval than GitHub Actions' 10-minute config, chosen
+  deliberately to leave more buffer against Render's ~15min threshold even
+  if a tick slips.
+- Decided to keep `keep-warm.yml` running alongside the new pinger rather
+  than retiring it — free, harmless redundancy, and GitHub Actions is
+  still perfectly adequate for the separate ingestion cron where timing
+  precision doesn't matter.
+- Verified with real data, not a config screenshot: pulled cron-job.org's
+  execution history (the `Executed` column, not `Scheduled` — the same
+  distinction that mattered for the GitHub Actions analysis) for 14
+  consecutive runs and computed the 13 gaps between them: 259–342s
+  (4:19–5:42), mean exactly 300s. Every gap landed within about 40 seconds
+  of the 5-minute target, nowhere close to Render's ~900s sleep threshold.
+- Cross-checked against Render's own request logs before trusting
+  cron-job.org's self-reported success, and that check surfaced a real
+  wrinkle: the log was dominated by a request every ~5 seconds from
+  `10.234.26.255`, a private RFC1918 address. That's not the pinger — it's
+  `render.yaml`'s own `healthCheckPath: /health` setting, which makes
+  Render's internal load balancer poll the instance's liveness constantly.
+  That traffic is Render checking on itself, not external activity, and
+  per Render's documented free-tier behavior it doesn't count toward the
+  idle/sleep timer (which is keyed off public inbound requests) — if it
+  did, no free-tier service could ever sleep, which would defeat the
+  feature. Filtering that internal noise out, one real hit from
+  `116.203.134.67` (Hetzner-hosted, matching cron-job.org's known
+  infrastructure) landed with a 200 OK, confirming cron-job.org's pings
+  are reaching the actual live service and not, say, a CDN-cached
+  response.
+
+**Why**
+
+The point of this whole exercise was the same discipline as the
+2026-08-23 entry: a monitoring tool reporting "success" isn't the same
+claim as "the thing it's monitoring for is actually happening." cron-job.org
+showing green checkmarks would have been just as thin evidence as
+GitHub Actions' green checkmarks were, on their own. Pulling the real
+`Executed` timestamps and computing actual gaps — rather than trusting
+the "every 5 minutes" schedule string — is what turns "we configured a
+pinger" into "we confirmed the pinger keeps Render below its sleep
+threshold." The Render-log cross-check served the same purpose one layer
+down: confirming the pings are landing on the real service, not just
+that a third-party dashboard says they succeeded.
+
+**Decisions made**
+
+- cron-job.org, 5-minute interval, is the primary keep-warm mechanism
+  going forward.
+- `keep-warm.yml` (GitHub Actions) stays as a secondary layer — no cost to
+  running both, and it's still a reasonable fallback if cron-job.org's
+  free tier ever changes terms.
+- The `render.yaml` `healthCheckPath` internal traffic is expected
+  behavior, not a bug — no change needed there. Documented in
+  `docs/DEPLOYMENT.md` so a future session doesn't mistake it for evidence
+  of anything about the keep-warm goal.
+
+**Verification**
+
+- Gap figures computed from the real `Executed` timestamps cron-job.org
+  reported for 14 consecutive runs (screenshots reviewed directly), using
+  `date -d` arithmetic in bash, not eyeballed.
+- Cross-checked against real Render production log lines (pasted directly
+  from the Render dashboard, not summarized secondhand), which is what
+  surfaced the `healthCheckPath` internal-traffic wrinkle before it could
+  be mistaken for pinger evidence.
+- A direct `curl` against the live `/health` endpoint returned in 0.8s
+  with no cold-start delay, consistent with (though not sole proof of) the
+  service staying warm.
+- Scanned the `docs/DEPLOYMENT.md` diff for secret-shaped strings before
+  staging — none found (this is a docs-only, infrastructure-observation
+  change; no `.env`, API key, or credential ever touched this session).
+- `git status --short` after staging → only `docs/DEPLOYMENT.md`.
+- Committed as `7d21763`, work only, separate from this journal entry.
