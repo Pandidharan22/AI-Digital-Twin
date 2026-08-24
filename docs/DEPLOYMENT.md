@@ -153,6 +153,30 @@ one up needs a new account on the owner's side — flagged as a concrete next
 step, not done in this pass. See `docs/DEV_JOURNAL.md`'s 2026-08-23 entry
 for the full data.
 
+**Implemented and verified (2026-08-24) — cron-job.org fixes the timing
+problem for real.** A cron-job.org account hits `/health` every 5 minutes
+(owner-created; account creation is outside this session's authority).
+Pulled the real execution history rather than trusting the config: 13
+consecutive gaps between actual `Executed` timestamps, all 4:19–5:42
+(259–342s), mean exactly 300s — matching the 5-min target almost exactly,
+with zero gaps anywhere near Render's ~900s (15-min) sleep threshold. Direct
+contrast with the GitHub Actions cron's 14/14 gaps *exceeding* threshold
+(median 25.8 min) from the 2026-08-23 entry above.
+
+Cross-checked against Render's own request logs, which needed one correction
+first: `render.yaml`'s `healthCheckPath: /health` makes Render's internal
+load balancer poll the instance every ~5s from a private `10.234.26.255`
+address — that traffic dominates the log but is Render's own internal
+liveness probing, not external traffic, and (per Render's documented
+behavior) doesn't count against the free-tier idle/sleep timer, which is
+keyed off public inbound requests only. Filtering that out, one real
+external hit landed from `116.203.134.67` — a Hetzner-hosted IP, matching
+cron-job.org's known infrastructure — 200 OK, confirming cron-job.org's
+own reported successes are actually reaching the live service, not just a
+cache. GitHub Actions' keep-warm cron is kept running alongside this as
+free, harmless redundancy (owner decision, 2026-08-24); cron-job.org is now
+the primary, precise layer.
+
 ---
 
 ## 5. Free-tier limits and where they bite
@@ -216,11 +240,12 @@ architecture change" is a stronger answer than pretending the limit isn't there.
       whitespace, a missing threshold config, a known gap that would have
       failed every run forever) — see `docs/DEV_JOURNAL.md`'s 2026-08-23
       entries for the full account.
-- [ ] Idle 30 min then immediately usable — **re-verified 2026-08-23, not
-      passing as designed**: the keep-warm cron's real gaps (median 25.8min,
-      14/14 samples over Render's ~15min sleep threshold) mean a visitor can
-      still land on a cold instance. See Sec4's 2026-08-23 note for the data
-      and the recommended fix (an external uptime pinger).
+- [x] Idle 30 min then immediately usable — **fixed and verified 2026-08-24**:
+      cron-job.org now pings `/health` every 5 min from its own scheduler;
+      13 real consecutive gaps measured 4:19–5:42 (mean 300s), nowhere near
+      Render's ~15min sleep threshold, versus the GitHub Actions cron's
+      14/14 gaps that all exceeded it. See Sec4's 2026-08-24 note for the
+      full data and the Render-log cross-check.
 - [ ] Mic-denied path shows a helpful message
 - [ ] Rate limit produces a spoken fallback, not silence
 
