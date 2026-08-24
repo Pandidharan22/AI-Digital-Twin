@@ -342,9 +342,19 @@ implemented, needs a new third-party account): an external uptime pinger
 (cron-job.org, UptimeRobot), `docs/DEPLOYMENT.md`'s own original Option 2.
 See `docs/DEPLOYMENT.md` Sec4 and `docs/DEV_JOURNAL.md`'s 2026-08-23 entry.
 
-Still open before Phase 5's exit criteria are fully met: the item above, and
-mobile Safari/cellular verification (iOS specifically — Android/cellular was
-confirmed live on 2026-08-23).
+**Keep-warm gap closed (2026-08-24):** a cron-job.org account now pings
+`/health` every 5 minutes on its own scheduler; real execution history shows
+13 consecutive gaps of 259-342s (mean 300s), nowhere near Render's ~15min
+sleep threshold — versus the GitHub Actions cron's 14/14 gaps that all
+exceeded it. Cross-checked against Render's own request logs (which also
+surfaced that `render.yaml`'s `healthCheckPath` internal traffic is Render's
+own liveness probing, not evidence either way about the sleep timer).
+GitHub Actions' `keep-warm.yml` stays running too, as free redundancy. See
+`docs/DEPLOYMENT.md` Sec4 and `docs/DEV_JOURNAL.md`'s 2026-08-24 entry.
+
+Still open before Phase 5's exit criteria are fully met: mobile Safari/
+cellular verification (iOS specifically — Android/cellular was confirmed
+live on 2026-08-23).
 
 **Blocked by:** Nothing functionally. Open items: (1) the Phase 1 barge-in
 timing (~455ms) number is still unrevisited since Phase 1 — see (2a) below for
