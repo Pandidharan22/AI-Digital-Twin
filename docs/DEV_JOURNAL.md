@@ -5825,3 +5825,84 @@ that a third-party dashboard says they succeeded.
   change; no `.env`, API key, or credential ever touched this session).
 - `git status --short` after staging → only `docs/DEPLOYMENT.md`.
 - Committed as `7d21763`, work only, separate from this journal entry.
+
+---
+
+## 2026-08-26 — Agent worker moved off Fly.io to a self-hosted Docker host
+
+**What happened**
+
+- The hiring evaluation this project was built for is now complete, so Fly.io's
+  `performance-2x` dedicated-CPU machine for the agent worker — the deliberate,
+  reliability-driven choice from Phase 5 (see the 2026-08-21/22 entries) — stopped being
+  worth its cost: Fly's Cost Explorer showed **$11.37** accrued, almost entirely
+  (`$11.13`) the worker's compute. Nothing free-tier justified keeping it running 24/7
+  once there was no evaluator left to demo it to.
+- Moved the worker to a **self-hosted Docker deployment** on an always-on local machine
+  that already exists in the owner's infrastructure (it hosts their portfolio site).
+  This is a direct redeployment, not a rewrite: `agent/Dockerfile` — built as a plain
+  `python:3.11-slim` image with no Fly-specific quirks (the CPU-only torch pin exists
+  because of a *Linux/PyPI* CUDA-resolution issue, not anything about Fly itself) —
+  builds and runs identically on this new host. No code changes were required.
+- Deployment steps: clone the repo on the host machine, create a local `.env` with the
+  same variables production has always used, then:
+  ```
+  docker build -t voice-twin-worker -f agent/Dockerfile .
+  docker run -d --name voice-twin-worker --restart unless-stopped --env-file .env voice-twin-worker
+  ```
+  `--restart unless-stopped` is the entire reliability story here — Docker restarts the
+  container on crash or host reboot automatically, no orchestrator needed for a
+  single-instance worker.
+- Set `WORKER_NUM_IDLE_PROCESSES=1` (down from the server-tuned default of `2`) — this
+  config knob (`agent/config.py`) already anticipated exactly this scenario; its comment
+  in `.env.example` says to keep it low "on a laptop running the worker locally," since
+  each idle process loads its own full copy of the embedding model.
+- On first start, `docker logs` showed a burst of `error initializing process` /
+  `failed to connect to livekit` entries with `[Errno -2] Name or service not known` —
+  a DNS resolution failure. Root cause: a real, transient internet drop on the host
+  network at that moment, not a bug — confirmed because `AgentServer`'s own retry logic
+  (idle-process respawn plus exponential-backoff reconnect, up to 16 attempts) recovered
+  on its own once connectivity returned, ending in a clean `"registered worker"` log line
+  (id `AW_7RowZmThSpif`, region "India South") with no code or config change involved.
+- Verified end-to-end, not just "logs look fine": `docker ps` showed the container
+  `Up` under the restart policy, and a real question asked through the live frontend
+  came back with a correct, cited answer — confirming the worker actually handles a
+  dispatched room, not just that it registered.
+- With the new deployment verified, the Fly.io app was **destroyed outright**
+  (`flyctl apps destroy voice-twin-worker --yes` → `Destroyed app voice-twin-worker`),
+  not just scaled to zero — a deliberate owner decision to fully decommission it rather
+  than keep it as a paid-if-reactivated fallback.
+- Updated `docs/DEPLOYMENT.md` §2 (service topology table) and §4 (cold-start
+  mitigation list) to describe the self-hosted Docker deployment as the actual current
+  setup, replacing the Fly.io-specific wording.
+
+**Why**
+
+The worker's core architectural property — it makes an *outbound* connection to
+LiveKit Cloud and waits for dispatch, with no inbound port to expose — is exactly what
+`docs/DEPLOYMENT.md` had already identified as the reason a local machine works fine as
+a host, no cloud account or billing required. Paying Fly.io for dedicated-CPU uptime
+made sense while a real evaluator might visit at any moment; once that window closed,
+the same reliability requirement (something always-on) was already satisfied for free
+by infrastructure the owner already runs.
+
+**Decisions made**
+
+- Fly.io is fully decommissioned for this project — the app is deleted, not paused.
+- The self-hosted Docker host is now the **permanent** worker deployment, not a
+  temporary or fallback measure.
+- `WORKER_NUM_IDLE_PROCESSES=1` for this host, matching the already-documented
+  laptop-tuning guidance rather than the server default.
+
+**Verification**
+
+- `docker ps` on the host showed `voice-twin-worker` `Up` with the restart policy
+  attached.
+- `docker logs` showed a real `"registered worker"` line from LiveKit Cloud with a
+  concrete worker id and region, after the transient DNS failures self-resolved via
+  the SDK's own retry logic — not silently assumed healthy.
+- A real end-to-end grounded question through the live frontend returned a correct,
+  cited answer, confirming actual dispatch handling, not just registration.
+- `flyctl apps destroy` returned `Destroyed app voice-twin-worker`, confirmed deleted.
+- Scanned the `docs/DEPLOYMENT.md` diff for secret-shaped strings before staging —
+  none found; no `.env` value was ever pasted into this session, only variable names.
