@@ -352,6 +352,16 @@ own liveness probing, not evidence either way about the sleep timer).
 GitHub Actions' `keep-warm.yml` stays running too, as free redundancy. See
 `docs/DEPLOYMENT.md` Sec4 and `docs/DEV_JOURNAL.md`'s 2026-08-24 entry.
 
+**Agent worker moved off Fly.io to a self-hosted Docker host (2026-08-26).**
+With the hiring evaluation complete, Fly.io's `performance-2x` worker machine
+(~$11.37 accrued) stopped being worth its cost. Redeployed `agent/Dockerfile`
+as-is (no code changes) via `docker run --restart unless-stopped` on an
+always-on local machine already in the owner's infrastructure, verified live
+(clean LiveKit registration plus a real cited answer through the frontend),
+then fully deleted the Fly.io app (`flyctl apps destroy`) — not kept as a
+fallback. `docs/DEPLOYMENT.md` §2/§4 updated to match. See
+`docs/DEV_JOURNAL.md`'s 2026-08-26 entry.
+
 Still open before Phase 5's exit criteria are fully met: mobile Safari/
 cellular verification (iOS specifically — Android/cellular was confirmed
 live on 2026-08-23).

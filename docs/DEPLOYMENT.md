@@ -59,8 +59,8 @@ The frontend gets **only** the public LiveKit URL. Everything else stays server-
 
 | Service | Type | Host | Why |
 |---|---|---|---|
-| Agent Worker | Long-running process | Fly.io | Persistent, outbound-only |
-| Token API | Web service | Fly.io / Render | Stateless HTTP |
+| Agent Worker | Long-running process | Self-hosted (Docker, local machine) | Persistent, outbound-only, free |
+| Token API | Web service | Render | Stateless HTTP |
 | Frontend | Static SPA | Vercel | Free, fast, global |
 | Vector store | Managed Postgres | Supabase | pgvector included |
 | Ingestion | Scheduled job | GitHub Actions | Free, visible history |
@@ -70,8 +70,10 @@ for dispatch. No inbound ports, no public IP, no tunnelling. Deploying it as a w
 service is a common mistake — platforms will health-check a port it never opens and
 kill it.
 
-That same property means **it runs fine from your laptop** for a live demo. Keep that as
-your fallback.
+That same property is exactly why it can run from a local machine indefinitely: `docker
+run --restart unless-stopped` on `agent/Dockerfile` (built from repo root) is the whole
+deployment. No cloud account, no billing, no capacity limits — the machine just needs to
+stay powered on and awake, same reliability requirement any always-on host would have.
 
 ---
 
@@ -108,8 +110,8 @@ evaluating badly.
 
 **Mitigations, in order of preference:**
 
-1. **Always-on worker.** Fly.io's free allowance can run a small machine continuously.
-   Configure it not to auto-stop. Best option.
+1. **Always-on worker.** Self-hosted via Docker (`--restart unless-stopped`) on a
+   machine that's already always-on. Zero cost, zero capacity limits. Best option.
 2. **External keep-warm.** A free uptime pinger (cron-job.org, UptimeRobot) hitting
    `/health` every 5–10 minutes.
 3. **Pay a few dollars for the evaluation window.** Not free-tier-pure, but $5 to avoid
